@@ -46,16 +46,28 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Force Android compileSdk
+      - name: Force Android SDK versions
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('android/app/build.gradle')
-          s = p.read_text()
-          s = s.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 36')
-          s = s.replace('targetSdk = flutter.targetSdkVersion', 'targetSdk = 36')
-          p.write_text(s)
-          print(p.read_text())
+          candidates = [Path('android/app/build.gradle'), Path('android/app/build.gradle.kts')]
+          patched = False
+          for p in candidates:
+              if not p.exists():
+                  continue
+              s = p.read_text()
+              original = s
+              s = s.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 36')
+              s = s.replace('compileSdk flutter.compileSdkVersion', 'compileSdk 36')
+              s = s.replace('targetSdk = flutter.targetSdkVersion', 'targetSdk = 36')
+              s = s.replace('targetSdk flutter.targetSdkVersion', 'targetSdk 36')
+              if s != original:
+                  p.write_text(s)
+                  patched = True
+                  print(f'patched {p}')
+                  print(s)
+          if not patched:
+              raise SystemExit('No Android app Gradle file was found or patched')
           PY
 
       - name: Build APK
