@@ -5,8 +5,31 @@ import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/editor_state.dart';
 import '../../core/services/local_file_upload_service.dart';
-import '../../core/models/repository_file_item.dart';
 
+// ─── 文件树节点 ───────────────────────────────────────────────────────────────
+class _TreeNode {
+  final String name;
+  final String path;
+  final bool isDir;
+  final String? sha;
+  final String? downloadUrl;
+  bool expanded;
+  bool loading;
+  List<_TreeNode> children;
+
+  _TreeNode({
+    required this.name,
+    required this.path,
+    required this.isDir,
+    this.sha,
+    this.downloadUrl,
+    this.expanded = false,
+    this.loading = false,
+    this.children = const [],
+  });
+}
+
+// ─── 主屏 ─────────────────────────────────────────────────────────────────────
 class WorkspaceScreen extends StatefulWidget {
   final AppState state;
   const WorkspaceScreen({super.key, required this.state});
@@ -16,407 +39,542 @@ class WorkspaceScreen extends StatefulWidget {
 }
 
 class _WorkspaceScreenState extends State<WorkspaceScreen> {
-  final repoNameController = TextEditingController();
-  final descController = TextEditingController();
-  bool creatingPrivate = true;
-  bool autoInit = true;
-  List<Map<String, dynamic>> repos = [];
-  List<RepositoryFileItem> files = [];
-  String currentPath = '';
-  bool loading = false;
-  String? message;
+  List<Map<String, dynamic>> _repos = [];
+  List<_TreeNode> _roots = [];
+  bool _loadingRepos = false;
+  bool _loadingTree  = false;
+  String? _error;
+
+  // 新建仓库表单
+  final _nameCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  bool _private   = true;
+  bool _autoInit  = true;
 
   @override
   void initState() {
     super.initState();
-    _loadRepos();
+    _fetchRepos();
   }
 
   @override
   void dispose() {
-    repoNameController.dispose();
-    descController.dispose();
+    _nameCtrl.dispose();
+    _descCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _loadRepos() async {
+  // ── 数据加载 ────────────────────────────────────────────────────────────────
+  Future<void> _fetchRepos() async {
     if (widget.state.github == null) return;
-    setState(() { loading = true; message = null; });
+    setState(() { _loadingRepos = true; _error = null; });
     try {
-      repos = await widget.state.github!.listRepositories();
+      _repos = await widget.state.github!.listRepositories();
     } catch (e) {
-      message = '仓库读取失败：$e';
+      _error = '仓库加载失败：$e';
     }
-    setState(() => loading = false);
+    setState(() => _loadingRepos = false);
   }
 
-  Future<void> _loadFiles([String path = '']) async {
+  Future<void> _selectRepo(String owner, String name) async {
+    widget.state.selectRepository(owner, name);
+    await _fetchTree('');
+  }
+
+  Future<void> _fetchTree(String path) async {
     final owner = widget.state.selectedOwner;
     final repo  = widget.state.selectedRepo;
     if (owner == null || repo == null || widget.state.github == null) return;
-    setState(() { loading = true; message = null; });
+    setState(() { _loadingTree = true; _error = null; });
     try {
       final data = await widget.state.github!.getContents(owner, repo, path: path);
-      files = data.map((e) => RepositoryFileItem(
-        path: e['path'] as String,
+      final nodes = data.map((e) => _TreeNode(
         name: e['name'] as String,
+        path: e['path'] as String,
         isDir: e['type'] == 'dir',
         sha: e['sha'] as String?,
         downloadUrl: e['download_url'] as String?,
-      )).toList();
-      currentPath = path;
+      )).toList()
+        ..sort((a, b) {
+          if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+      if (path.isEmpty) {
+        setState(() => _roots = nodes);
+      } else {
+        _insertChildren(_roots, path, nodes);
+        setState(() {});
+      }
     } catch (e) {
-      message = '文件树读取失败：$e';
+      setState(() => _error = '文件树加载失败：$e');
     }
-    setState(() => loading = false);
+    setState(() => _loadingTree = false);
   }
 
-  Future<void> _createRepo() async {
-    if (repoNameController.text.trim().isEmpty || widget.state.github == null) return;
-    setState(() => loading = true);
-    try {
-      final repo  = await widget.state.github!.createRepository(
-        name: repoNameController.text.trim(),
-        private: creatingPrivate,
-        autoInit: autoInit,
-        description: descController.text.trim(),
-      );
-      final owner = repo['owner']['login'] as String;
-      final name  = repo['name'] as String;
-      widget.state.selectRepository(owner, name);
-      await _loadRepos();
-      await _loadFiles();
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      setState(() => message = '创建仓库失败：$e');
+  void _insertChildren(List<_TreeNode> nodes, String path, List<_TreeNode> children) {
+    for (final n in nodes) {
+      if (n.path == path) {
+        n.children = children;
+        n.loading  = false;
+        return;
+      }
+      if (n.isDir && n.children.isNotEmpty) {
+        _insertChildren(n.children, path, children);
+      }
     }
-    setState(() => loading = false);
   }
 
-  Future<void> _openFile(RepositoryFileItem item) async {
+  Future<void> _toggleDir(_TreeNode node) async {
+    if (!node.isDir) return;
+    if (node.expanded) {
+      setState(() => node.expanded = false);
+      return;
+    }
+    if (node.children.isEmpty) {
+      setState(() => node.loading = true);
+      await _fetchTree(node.path);
+    }
+    setState(() { node.expanded = true; node.loading = false; });
+  }
+
+  Future<void> _openFile(_TreeNode node) async {
     final owner = widget.state.selectedOwner;
     final repo  = widget.state.selectedRepo;
     if (owner == null || repo == null || widget.state.github == null) return;
-    setState(() => loading = true);
     try {
-      final file    = await widget.state.github!.getFile(owner, repo, item.path);
+      final file    = await widget.state.github!.getFile(owner, repo, node.path);
       final raw     = (file['content'] as String).replaceAll('\n', '');
       final content = utf8.decode(base64Decode(raw));
       if (!mounted) return;
-      context.read<EditorState>().openFile(item.path, content);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已打开 ${item.name}')));
+      context.read<EditorState>().openFile(node.path, content);
     } catch (e) {
-      setState(() => message = '打开文件失败：$e');
+      setState(() => _error = '打开失败：$e');
     }
-    setState(() => loading = false);
   }
 
-  Future<void> _uploadLocalFile() async {
+  Future<void> _upload() async {
     final owner = widget.state.selectedOwner;
     final repo  = widget.state.selectedRepo;
     if (owner == null || repo == null || widget.state.github == null) return;
-    setState(() => loading = true);
     try {
-      final service = LocalFileUploadService();
-      final file    = await service.pickOne();
-      if (file == null) { setState(() => loading = false); return; }
-      final bytes      = await service.bytesOf(file);
-      final targetPath = currentPath.isEmpty ? file.name : '$currentPath/${file.name}';
+      final svc  = LocalFileUploadService();
+      final file = await svc.pickOne();
+      if (file == null) return;
+      final bytes = await svc.bytesOf(file);
       await widget.state.github!.putFile(
-        owner: owner, repo: repo, path: targetPath,
-        message: 'Upload ${file.name} by MoonXide',
+        owner: owner, repo: repo,
+        path: file.name,
+        message: 'Upload ${file.name}',
         contentBase64: base64Encode(bytes),
       );
-      await _loadFiles(currentPath);
+      await _fetchTree('');
     } catch (e) {
-      setState(() => message = '上传失败：$e');
+      setState(() => _error = '上传失败：$e');
     }
-    setState(() => loading = false);
   }
 
-  void _showCreateRepoSheet() {
+  Future<void> _createRepo() async {
+    if (_nameCtrl.text.trim().isEmpty || widget.state.github == null) return;
+    setState(() => _loadingRepos = true);
+    try {
+      final r = await widget.state.github!.createRepository(
+        name: _nameCtrl.text.trim(),
+        private: _private,
+        autoInit: _autoInit,
+        description: _descCtrl.text.trim(),
+      );
+      final owner = r['owner']['login'] as String;
+      final name  = r['name'] as String;
+      widget.state.selectRepository(owner, name);
+      await _fetchRepos();
+      await _fetchTree('');
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      setState(() => _error = '创建失败：$e');
+    }
+    setState(() => _loadingRepos = false);
+  }
+
+  // ── 新建仓库底部弹窗 ────────────────────────────────────────────────────────
+  void _showCreateSheet() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _CreateRepoSheet(
-        nameCtrl: repoNameController,
-        descCtrl: descController,
-        isPrivate: creatingPrivate,
-        autoInit: autoInit,
-        onPrivateChanged: (v) => setState(() => creatingPrivate = v),
-        onAutoInitChanged: (v) => setState(() => autoInit = v),
-        onConfirm: _createRepo,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSt) {
+          final isDark  = Theme.of(ctx).brightness == Brightness.dark;
+          final scheme  = Theme.of(ctx).colorScheme;
+          return Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF0A1C2C) : Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                    color: isDark
+                        ? Colors.white.withOpacity(0.08)
+                        : Colors.white.withOpacity(0.70)),
+                boxShadow: [
+                  BoxShadow(
+                      color: const Color(0xFF3B8FC7).withOpacity(0.16),
+                      blurRadius: 28,
+                      offset: const Offset(0, -6))
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 34, height: 4,
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                          color: scheme.onSurface.withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  const Text('新建仓库',
+                      style: TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 14),
+                  MxTextField(
+                      controller: _nameCtrl,
+                      hint: '仓库名称',
+                      prefix: const Icon(Icons.folder_rounded, size: 17)),
+                  const SizedBox(height: 8),
+                  MxTextField(
+                      controller: _descCtrl,
+                      hint: '描述（可选）',
+                      prefix: const Icon(Icons.notes_rounded, size: 17)),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    const Expanded(
+                        child: Text('私有仓库',
+                            style: TextStyle(fontWeight: FontWeight.w600))),
+                    Switch(
+                        value: _private,
+                        onChanged: (v) => setSt(() => _private = v)),
+                  ]),
+                  Row(children: [
+                    const Expanded(
+                        child: Text('初始化 README',
+                            style: TextStyle(fontWeight: FontWeight.w600))),
+                    Switch(
+                        value: _autoInit,
+                        onChanged: (v) => setSt(() => _autoInit = v)),
+                  ]),
+                  const SizedBox(height: 12),
+                  MxButton(
+                      label: '创建',
+                      icon: Icons.add_rounded,
+                      onPressed: _createRepo),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
+  // ── 构建 ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final selected = widget.state.selectedRepo;
     final scheme   = Theme.of(context).colorScheme;
     final isDark   = Theme.of(context).brightness == Brightness.dark;
+    final selected = widget.state.selectedRepo;
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 工具栏
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  selected != null
-                      ? '${widget.state.selectedOwner}/$selected'
-                      : '选择仓库',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: scheme.onSurface.withOpacity(0.6),
-                    fontSize: 13,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              MxIconBtn(icon: Icons.upload_rounded,   onPressed: _uploadLocalFile,     tooltip: '上传文件', size: 36),
-              const SizedBox(width: 4),
-              MxIconBtn(icon: Icons.sync_rounded,     onPressed: _loadRepos,           tooltip: '刷新',    size: 36),
-              const SizedBox(width: 4),
-              MxIconBtn(icon: Icons.add_rounded,      onPressed: _showCreateRepoSheet, tooltip: '新建仓库', size: 36),
-            ],
-          ),
+        // 仓库选择器 + 工具栏
+        _RepoBar(
+          repos: _repos,
+          selected: selected,
+          loading: _loadingRepos,
+          onSelect: (r) => _selectRepo(
+              r['owner']['login'] as String, r['name'] as String),
+          onRefresh: _fetchRepos,
+          onNew: _showCreateSheet,
+          onUpload: _upload,
         ),
-        if (loading) const LinearProgressIndicator(minHeight: 2),
-        if (message != null)
+
+        if (_error != null)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text(message!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+            child: Text(_error!,
+                style: const TextStyle(color: Colors.red, fontSize: 11)),
           ),
-        // 内容
+
+        if (_loadingTree)
+          const LinearProgressIndicator(minHeight: 2),
+
+        // 文件树
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            children: [
-              const MxSectionLabel('仓库'),
-              if (repos.isEmpty && !loading)
-                const MxEmpty(icon: Icons.folder_off_rounded, label: '没有仓库', hint: '点击 + 创建第一个仓库')
-              else
-                SizedBox(
-                  height: 96,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: repos.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (_, i) {
-                      final r          = repos[i];
-                      final name       = r['name'] as String;
-                      final owner      = r['owner']['login'] as String;
-                      final isSelected = selected == name;
-                      return GestureDetector(
-                        onTap: () {
-                          widget.state.selectRepository(owner, name);
-                          _loadFiles();
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          width: 170,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? scheme.primary.withOpacity(0.14)
-                                : (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.65),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: isSelected
-                                  ? scheme.primary.withOpacity(0.45)
-                                  : Colors.white.withOpacity(isDark ? 0.08 : 0.45),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(
-                                r['private'] == true ? Icons.lock_rounded : Icons.folder_open_rounded,
-                                color: isSelected ? scheme.primary : scheme.onSurface.withOpacity(0.55),
-                                size: 18,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 13,
-                                    color: isSelected ? scheme.primary : null,
-                                  )),
-                              Text(
-                                r['private'] == true ? '私有' : '公开',
-                                style: TextStyle(fontSize: 11, color: scheme.onSurface.withOpacity(0.45)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              const MxSectionLabel('文件'),
-              if (currentPath.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      Icon(Icons.folder_open_rounded, size: 14, color: scheme.onSurface.withOpacity(0.45)),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text('/$currentPath',
-                            style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.55))),
+          child: selected == null
+              ? const MxEmpty(
+                  icon: Icons.folder_off_rounded,
+                  label: '未选择仓库',
+                  hint: '从上方选择或新建仓库')
+              : _roots.isEmpty && !_loadingTree
+                  ? const MxEmpty(
+                      icon: Icons.description_outlined,
+                      label: '仓库为空',
+                      hint: '上传文件或等待初始化')
+                  : ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 24),
+                      itemCount: _roots.length,
+                      itemBuilder: (_, i) => _TreeTile(
+                        node: _roots[i],
+                        depth: 0,
+                        onToggle: _toggleDir,
+                        onOpen: _openFile,
+                        scheme: scheme,
+                        isDark: isDark,
                       ),
-                      GestureDetector(
-                        onTap: () => _loadFiles(''),
-                        child: Text('根目录',
-                            style: TextStyle(fontSize: 12, color: scheme.primary, fontWeight: FontWeight.w700)),
-                      ),
-                    ],
-                  ),
-                ),
-              if (files.isEmpty && !loading && selected != null)
-                const MxEmpty(icon: Icons.description_outlined, label: '目录为空', hint: '上传文件或切换仓库')
-              else
-                ...files.map((item) => MxCard(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      onTap: () => item.isDir ? _loadFiles(item.path) : _openFile(item),
-                      child: Row(
-                        children: [
-                          Icon(
-                            item.isDir ? Icons.folder_rounded : _fileIcon(item.name),
-                            color: item.isDir ? const Color(0xFFF5A623) : scheme.primary,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(item.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                                Text(item.path,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(fontSize: 11, color: scheme.onSurface.withOpacity(0.45))),
-                              ],
-                            ),
-                          ),
-                          Icon(
-                            item.isDir ? Icons.chevron_right_rounded : Icons.open_in_new_rounded,
-                            size: 16,
-                            color: scheme.onSurface.withOpacity(0.30),
-                          ),
-                        ],
-                      ),
-                    )),
-            ],
-          ),
+                    ),
         ),
       ],
     );
   }
-
-  IconData _fileIcon(String name) {
-    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-    switch (ext) {
-      case 'dart':                    return Icons.flutter_dash;
-      case 'kt': case 'java':         return Icons.code_rounded;
-      case 'json': case 'yaml': case 'yml': return Icons.data_object_rounded;
-      case 'md':                      return Icons.article_rounded;
-      case 'png': case 'jpg': case 'jpeg': case 'svg': return Icons.image_rounded;
-      default:                        return Icons.insert_drive_file_rounded;
-    }
-  }
 }
 
-// ─── 新建仓库底部弹窗 ─────────────────────────────────────────────────────────
-class _CreateRepoSheet extends StatelessWidget {
-  const _CreateRepoSheet({
-    required this.nameCtrl,
-    required this.descCtrl,
-    required this.isPrivate,
-    required this.autoInit,
-    required this.onPrivateChanged,
-    required this.onAutoInitChanged,
-    required this.onConfirm,
+// ─── 仓库选择栏 ───────────────────────────────────────────────────────────────
+class _RepoBar extends StatelessWidget {
+  const _RepoBar({
+    required this.repos,
+    required this.selected,
+    required this.loading,
+    required this.onSelect,
+    required this.onRefresh,
+    required this.onNew,
+    required this.onUpload,
   });
 
-  final TextEditingController nameCtrl;
-  final TextEditingController descCtrl;
-  final bool isPrivate;
-  final bool autoInit;
-  final ValueChanged<bool> onPrivateChanged;
-  final ValueChanged<bool> onAutoInitChanged;
-  final VoidCallback onConfirm;
+  final List<Map<String, dynamic>> repos;
+  final String? selected;
+  final bool loading;
+  final ValueChanged<Map<String, dynamic>> onSelect;
+  final VoidCallback onRefresh;
+  final VoidCallback onNew;
+  final VoidCallback onUpload;
 
   @override
   Widget build(BuildContext context) {
-    final isDark  = Theme.of(context).brightness == Brightness.dark;
-    final scheme  = Theme.of(context).colorScheme;
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-        decoration: BoxDecoration(
-          color: (isDark ? const Color(0xFF0A1E2E) : Colors.white).withOpacity(0.96),
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: Colors.white.withOpacity(isDark ? 0.10 : 0.55)),
-          boxShadow: [BoxShadow(color: const Color(0xFF3B8FC7).withOpacity(0.14), blurRadius: 32, offset: const Offset(0, -8))],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 拖拽把手
-            Center(
-              child: Container(
-                width: 36, height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: scheme.onSurface.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const Text('新建仓库', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 16),
-            MxTextField(controller: nameCtrl, hint: '仓库名称', prefix: const Icon(Icons.folder_rounded, size: 18)),
-            const SizedBox(height: 10),
-            MxTextField(controller: descCtrl, hint: '描述（可选）', prefix: const Icon(Icons.notes_rounded, size: 18)),
-            const SizedBox(height: 12),
-            _SwitchRow(label: '私有仓库',     value: isPrivate, onChanged: onPrivateChanged),
-            _SwitchRow(label: '初始化 README', value: autoInit,  onChanged: onAutoInitChanged),
-            const SizedBox(height: 16),
-            MxButton(label: '创建并作为工作区', icon: Icons.add_rounded, onPressed: onConfirm),
-          ],
-        ),
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+      decoration: BoxDecoration(
+        color: (isDark ? const Color(0xFF0A1C2C) : const Color(0xFFEAF4FF))
+            .withOpacity(0.95),
+        border: Border(
+            bottom: BorderSide(
+                color: isDark
+                    ? Colors.white.withOpacity(0.07)
+                    : Colors.black.withOpacity(0.06))),
+      ),
+      child: Row(
+        children: [
+          // 仓库下拉
+          Expanded(
+            child: repos.isEmpty
+                ? Text(
+                    loading ? '加载中…' : '无仓库',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.onSurface.withOpacity(0.45)),
+                  )
+                : DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: selected,
+                      hint: Text('选择仓库',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurface.withOpacity(0.45))),
+                      icon: Icon(Icons.expand_more_rounded,
+                          size: 16, color: scheme.primary),
+                      dropdownColor:
+                          isDark ? const Color(0xFF0A1C2C) : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      isDense: true,
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.onSurface),
+                      items: repos
+                          .map((r) => DropdownMenuItem<String>(
+                                value: r['name'] as String,
+                                child: Row(children: [
+                                  Icon(
+                                    r['private'] == true
+                                        ? Icons.lock_rounded
+                                        : Icons.folder_open_rounded,
+                                    size: 14,
+                                    color: scheme.primary,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(r['name'] as String),
+                                ]),
+                              ))
+                          .toList(),
+                      onChanged: (name) {
+                        if (name == null) return;
+                        final r = repos.firstWhere(
+                            (e) => e['name'] == name);
+                        onSelect(r);
+                      },
+                    ),
+                  ),
+          ),
+          MxIconBtn(
+              icon: Icons.upload_rounded,
+              onPressed: onUpload,
+              tooltip: '上传',
+              size: 32),
+          const SizedBox(width: 2),
+          MxIconBtn(
+              icon: Icons.refresh_rounded,
+              onPressed: onRefresh,
+              tooltip: '刷新',
+              size: 32),
+          const SizedBox(width: 2),
+          MxIconBtn(
+              icon: Icons.add_rounded,
+              onPressed: onNew,
+              tooltip: '新建仓库',
+              size: 32),
+        ],
       ),
     );
   }
 }
 
-class _SwitchRow extends StatelessWidget {
-  const _SwitchRow({required this.label, required this.value, required this.onChanged});
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
+// ─── 文件树行（递归） ─────────────────────────────────────────────────────────
+class _TreeTile extends StatelessWidget {
+  const _TreeTile({
+    required this.node,
+    required this.depth,
+    required this.onToggle,
+    required this.onOpen,
+    required this.scheme,
+    required this.isDark,
+  });
+
+  final _TreeNode node;
+  final int depth;
+  final Future<void> Function(_TreeNode) onToggle;
+  final Future<void> Function(_TreeNode) onOpen;
+  final ColorScheme scheme;
+  final bool isDark;
+
+  IconData _icon() {
+    if (node.isDir) {
+      return node.expanded
+          ? Icons.folder_open_rounded
+          : Icons.folder_rounded;
+    }
+    final ext = node.name.contains('.')
+        ? node.name.split('.').last.toLowerCase()
+        : '';
+    switch (ext) {
+      case 'dart':                         return Icons.flutter_dash;
+      case 'kt': case 'java':              return Icons.code_rounded;
+      case 'json': case 'yaml': case 'yml': return Icons.data_object_rounded;
+      case 'md':                           return Icons.article_rounded;
+      case 'png': case 'jpg': case 'jpeg': case 'svg':
+                                           return Icons.image_rounded;
+      case 'gradle': case 'xml':           return Icons.settings_rounded;
+      default:                             return Icons.insert_drive_file_rounded;
+    }
+  }
+
+  Color _iconColor() {
+    if (node.isDir) return const Color(0xFFF5A623);
+    final ext = node.name.contains('.')
+        ? node.name.split('.').last.toLowerCase()
+        : '';
+    switch (ext) {
+      case 'dart':  return const Color(0xFF54C5F8);
+      case 'kt':    return const Color(0xFF7F52FF);
+      case 'java':  return const Color(0xFFED8B00);
+      case 'json': case 'yaml': case 'yml': return const Color(0xFF6DB33F);
+      case 'md':    return const Color(0xFF519ABA);
+      default:      return scheme.onSurface.withOpacity(0.50);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
-          Switch(value: value, onChanged: onChanged),
-        ],
-      ),
+    const rowH = 30.0;
+    final indent = 12.0 + depth * 16.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: () => node.isDir ? onToggle(node) : onOpen(node),
+          child: SizedBox(
+            height: rowH,
+            child: Row(
+              children: [
+                SizedBox(width: indent),
+                // 展开箭头（仅目录）
+                SizedBox(
+                  width: 16,
+                  child: node.isDir
+                      ? (node.loading
+                          ? const SizedBox(
+                              width: 10,
+                              height: 10,
+                              child: CircularProgressIndicator(strokeWidth: 1.5))
+                          : Icon(
+                              node.expanded
+                                  ? Icons.arrow_drop_down_rounded
+                                  : Icons.arrow_right_rounded,
+                              size: 16,
+                              color: scheme.onSurface.withOpacity(0.45),
+                            ))
+                      : null,
+                ),
+                const SizedBox(width: 2),
+                Icon(_icon(), size: 15, color: _iconColor()),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    node.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: node.isDir
+                          ? FontWeight.w600
+                          : FontWeight.w400,
+                      color: scheme.onSurface.withOpacity(0.85),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // 子节点
+        if (node.isDir && node.expanded)
+          ...node.children.map((child) => _TreeTile(
+                node: child,
+                depth: depth + 1,
+                onToggle: onToggle,
+                onOpen: onOpen,
+                scheme: scheme,
+                isDark: isDark,
+              )),
+      ],
     );
   }
 }

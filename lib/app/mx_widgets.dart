@@ -1,20 +1,17 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MoonXide 自定义 UI 组件库
-// 所有组件都不依赖原生 Material 外观，使用毛玻璃 + 高斯模糊 + 雪山淡蓝风格。
+// MoonXide 自定义 UI 组件库 — 静态磨砂材质，无动态模糊
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── 毛玻璃容器 ───────────────────────────────────────────────────────────────
+// ─── 磨砂容器 ─────────────────────────────────────────────────────────────────
 class MxGlass extends StatelessWidget {
   const MxGlass({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(16),
     this.radius = 20.0,
-    this.blur = 18.0,
-    this.opacity = 0.72,
+    this.opacity = 0.92,
     this.border = true,
     this.shadow = true,
     this.color,
@@ -23,7 +20,6 @@ class MxGlass extends StatelessWidget {
   final Widget child;
   final EdgeInsets padding;
   final double radius;
-  final double blur;
   final double opacity;
   final bool border;
   final bool shadow;
@@ -32,29 +28,35 @@ class MxGlass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final base = color ?? (isDark ? const Color(0xFF0F2230) : Colors.white);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: base.withOpacity(opacity),
-            borderRadius: BorderRadius.circular(radius),
-            border: border ? Border.all(color: Colors.white.withOpacity(isDark ? 0.10 : 0.55), width: 1) : null,
-            boxShadow: shadow
-                ? [BoxShadow(color: const Color(0xFF3B8FC7).withOpacity(isDark ? 0.18 : 0.12), blurRadius: 24, offset: const Offset(0, 8))]
-                : null,
-          ),
-          child: child,
-        ),
+    final base   = color ?? (isDark ? const Color(0xFF0F2230) : Colors.white);
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: base.withOpacity(opacity),
+        borderRadius: BorderRadius.circular(radius),
+        border: border
+            ? Border.all(
+                color: isDark
+                    ? Colors.white.withOpacity(0.09)
+                    : Colors.white.withOpacity(0.70),
+              )
+            : null,
+        boxShadow: shadow
+            ? [
+                BoxShadow(
+                  color: const Color(0xFF3B8FC7).withOpacity(isDark ? 0.14 : 0.10),
+                  blurRadius: 20,
+                  offset: const Offset(0, 6),
+                )
+              ]
+            : null,
       ),
+      child: child,
     );
   }
 }
 
-// ─── 毛玻璃卡片（可点击） ─────────────────────────────────────────────────────
+// ─── 磨砂卡片（可点击） ───────────────────────────────────────────────────────
 class MxCard extends StatelessWidget {
   const MxCard({
     super.key,
@@ -62,8 +64,7 @@ class MxCard extends StatelessWidget {
     this.padding,
     this.onTap,
     this.color,
-    this.radius = 18.0,
-    this.blur = 14.0,
+    this.radius = 16.0,
   });
 
   final Widget child;
@@ -71,34 +72,31 @@ class MxCard extends StatelessWidget {
   final VoidCallback? onTap;
   final Color? color;
   final double radius;
-  final double blur;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final base = color ?? (isDark ? const Color(0xFF0F2230) : Colors.white);
+    final base   = color ?? (isDark ? const Color(0xFF0F2230) : Colors.white);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: ClipRRect(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Material(
+        color: base.withOpacity(isDark ? 0.82 : 0.90),
         borderRadius: BorderRadius.circular(radius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-          child: Material(
-            color: base.withOpacity(0.68),
-            borderRadius: BorderRadius.circular(radius),
-            child: InkWell(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(radius),
+          onTap: onTap,
+          splashColor: Theme.of(context).colorScheme.primary.withOpacity(0.07),
+          child: Container(
+            padding: padding ?? const EdgeInsets.all(14),
+            decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(radius),
-              onTap: onTap,
-              splashColor: Theme.of(context).colorScheme.primary.withOpacity(0.08),
-              child: Container(
-                padding: padding ?? const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(radius),
-                  border: Border.all(color: Colors.white.withOpacity(isDark ? 0.08 : 0.45)),
-                ),
-                child: child,
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withOpacity(0.07)
+                    : Colors.white.withOpacity(0.55),
               ),
             ),
+            child: child,
           ),
         ),
       ),
@@ -127,29 +125,38 @@ class MxDropdown<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-          decoration: BoxDecoration(
-            color: (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.68),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: scheme.primary.withOpacity(0.18)),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<T>(
-              value: value,
-              hint: hint != null ? Text(hint!, style: TextStyle(color: scheme.onSurface.withOpacity(0.45))) : null,
-              icon: Icon(Icons.expand_more_rounded, color: scheme.primary),
-              dropdownColor: isDark ? const Color(0xFF0F2230) : Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              items: items.map((e) => DropdownMenuItem<T>(value: e.value, child: Row(children: [if (e.icon != null) ...[Icon(e.icon, size: 16, color: scheme.primary), const SizedBox(width: 8)], Text(e.label)]))).toList(),
-              onChanged: onChanged,
-              isExpanded: true,
-            ),
-          ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      decoration: BoxDecoration(
+        color: (isDark ? const Color(0xFF0F2230) : Colors.white)
+            .withOpacity(isDark ? 0.82 : 0.90),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.primary.withOpacity(0.18)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          hint: hint != null
+              ? Text(hint!,
+                  style: TextStyle(color: scheme.onSurface.withOpacity(0.45)))
+              : null,
+          icon: Icon(Icons.expand_more_rounded, color: scheme.primary),
+          dropdownColor: isDark ? const Color(0xFF0F2230) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          items: items
+              .map((e) => DropdownMenuItem<T>(
+                    value: e.value,
+                    child: Row(children: [
+                      if (e.icon != null) ...[
+                        Icon(e.icon, size: 16, color: scheme.primary),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(e.label),
+                    ]),
+                  ))
+              .toList(),
+          onChanged: onChanged,
+          isExpanded: true,
         ),
       ),
     );
@@ -184,33 +191,41 @@ class MxButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final c = color ?? scheme.primary;
+    final scheme   = Theme.of(context).colorScheme;
+    final c        = color ?? scheme.primary;
     final disabled = onPressed == null;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(small ? 12 : 16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Material(
-          color: filled ? c.withOpacity(disabled ? 0.28 : 0.88) : c.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(small ? 12 : 16),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(small ? 12 : 16),
-            onTap: onPressed,
-            child: Container(
-              padding: EdgeInsets.symmetric(horizontal: small ? 12 : 18, vertical: small ? 8 : 12),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(small ? 12 : 16),
-                border: Border.all(color: c.withOpacity(filled ? 0.0 : 0.35)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (icon != null) ...[Icon(icon, size: small ? 16 : 18, color: filled ? Colors.white : c), const SizedBox(width: 6)],
-                  Text(label, style: TextStyle(fontWeight: FontWeight.w800, fontSize: small ? 13 : 14, color: filled ? Colors.white : c)),
-                ],
-              ),
-            ),
+    return Material(
+      color: filled
+          ? c.withOpacity(disabled ? 0.30 : 1.0)
+          : c.withOpacity(0.08),
+      borderRadius: BorderRadius.circular(small ? 10 : 14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(small ? 10 : 14),
+        onTap: onPressed,
+        child: Container(
+          padding: EdgeInsets.symmetric(
+              horizontal: small ? 12 : 18, vertical: small ? 8 : 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(small ? 10 : 14),
+            border: filled
+                ? null
+                : Border.all(color: c.withOpacity(0.32)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon,
+                    size: small ? 15 : 17,
+                    color: filled ? Colors.white : c),
+                const SizedBox(width: 6),
+              ],
+              Text(label,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: small ? 13 : 14,
+                      color: filled ? Colors.white : c)),
+            ],
           ),
         ),
       ),
@@ -249,31 +264,34 @@ class MxTextField extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: TextField(
-          controller: controller,
-          obscureText: obscure,
-          minLines: minLines,
-          maxLines: maxLines,
-          onChanged: onChanged,
-          keyboardType: keyboardType,
-          style: TextStyle(color: scheme.onSurface),
-          decoration: InputDecoration(
-            hintText: hint,
-            labelText: label,
-            prefixIcon: prefix,
-            suffixIcon: suffix,
-            filled: true,
-            fillColor: (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.68),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: scheme.primary.withOpacity(0.18))),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: scheme.primary.withOpacity(0.18))),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: scheme.primary.withOpacity(0.6), width: 1.5)),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          ),
-        ),
+    return TextField(
+      controller: controller,
+      obscureText: obscure,
+      minLines: minLines,
+      maxLines: maxLines,
+      onChanged: onChanged,
+      keyboardType: keyboardType,
+      style: TextStyle(color: scheme.onSurface),
+      decoration: InputDecoration(
+        hintText: hint,
+        labelText: label,
+        prefixIcon: prefix,
+        suffixIcon: suffix,
+        filled: true,
+        fillColor: (isDark ? const Color(0xFF0F2230) : Colors.white)
+            .withOpacity(isDark ? 0.82 : 0.90),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: scheme.primary.withOpacity(0.18))),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: scheme.primary.withOpacity(0.18))),
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide:
+                BorderSide(color: scheme.primary.withOpacity(0.60), width: 1.5)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
     );
   }
@@ -290,7 +308,11 @@ class MxSectionLabel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(2, 18, 2, 8),
       child: Text(
         text.toUpperCase(),
-        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.6, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.42)),
+        style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.6,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.40)),
       ),
     );
   }
@@ -307,15 +329,21 @@ class MxBadge extends StatelessWidget {
     final c = color ?? Theme.of(context).colorScheme.primary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-      decoration: BoxDecoration(color: c.withOpacity(0.14), borderRadius: BorderRadius.circular(20), border: Border.all(color: c.withOpacity(0.28))),
-      child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: c)),
+      decoration: BoxDecoration(
+          color: c.withOpacity(0.13),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: c.withOpacity(0.28))),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w800, color: c)),
     );
   }
 }
 
 // ─── 空状态 ───────────────────────────────────────────────────────────────────
 class MxEmpty extends StatelessWidget {
-  const MxEmpty({super.key, required this.icon, required this.label, this.hint});
+  const MxEmpty(
+      {super.key, required this.icon, required this.label, this.hint});
   final IconData icon;
   final String label;
   final String? hint;
@@ -328,10 +356,19 @@ class MxEmpty extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 48, color: scheme.onSurface.withOpacity(0.20)),
+          Icon(icon, size: 48, color: scheme.onSurface.withOpacity(0.18)),
           const SizedBox(height: 12),
-          Text(label, style: TextStyle(fontWeight: FontWeight.w700, color: scheme.onSurface.withOpacity(0.48))),
-          if (hint != null) ...[const SizedBox(height: 4), Text(hint!, style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.32)))],
+          Text(label,
+              style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurface.withOpacity(0.45))),
+          if (hint != null) ...[
+            const SizedBox(height: 4),
+            Text(hint!,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurface.withOpacity(0.30))),
+          ],
         ],
       ),
     );
@@ -348,15 +385,25 @@ class MxActionRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
-        children: children.expand((w) => [Expanded(child: w), const SizedBox(width: 10)]).toList()..removeLast(),
+        children: children
+            .expand((w) => [Expanded(child: w), const SizedBox(width: 10)])
+            .toList()
+          ..removeLast(),
       ),
     );
   }
 }
 
-// ─── 图标按钮（毛玻璃） ───────────────────────────────────────────────────────
+// ─── 图标按钮（静态磨砂） ─────────────────────────────────────────────────────
 class MxIconBtn extends StatelessWidget {
-  const MxIconBtn({super.key, required this.icon, required this.onPressed, this.tooltip, this.active = false, this.size = 40});
+  const MxIconBtn({
+    super.key,
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+    this.active = false,
+    this.size = 40,
+  });
   final IconData icon;
   final VoidCallback? onPressed;
   final String? tooltip;
@@ -367,21 +414,24 @@ class MxIconBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final w = ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Material(
-          color: active ? scheme.primary.withOpacity(0.18) : (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.55),
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: onPressed,
-            child: SizedBox(
-              width: size,
-              height: size,
-              child: Icon(icon, size: size * 0.5, color: active ? scheme.primary : scheme.onSurface.withOpacity(0.72)),
-            ),
+    final w = Material(
+      color: active
+          ? scheme.primary.withOpacity(0.16)
+          : (isDark ? const Color(0xFF0F2230) : Colors.white)
+              .withOpacity(isDark ? 0.72 : 0.82),
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(11),
+        onTap: onPressed,
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Icon(
+            icon,
+            size: size * 0.48,
+            color: active
+                ? scheme.primary
+                : scheme.onSurface.withOpacity(0.68),
           ),
         ),
       ),
@@ -396,7 +446,13 @@ class MxDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Divider(height: 20, thickness: 0.5, color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.35));
+    return Divider(
+        height: 20,
+        thickness: 0.5,
+        color: Theme.of(context)
+            .colorScheme
+            .outlineVariant
+            .withOpacity(0.30));
   }
 }
 
@@ -411,9 +467,14 @@ class MxProgressBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2)),
           const SizedBox(width: 12),
-          Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
+          Expanded(
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.w600))),
         ],
       ),
     );

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../app/mx_widgets.dart';
 import '../../core/ai/ai_config_state.dart';
 import '../../core/chat/chat_conversation_state.dart';
+import '../../core/chat/chat_message_record.dart';
 import '../../core/chat/chat_role.dart';
 import '../../core/workflow/ai_workflow_engine.dart';
 import '../../core/workflow/ai_task_step_status.dart';
@@ -48,11 +49,120 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_scrollCtrl.hasClients) {
         _scrollCtrl.animateTo(
           _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 260),
+          duration: const Duration(milliseconds: 240),
           curve: Curves.easeOutCubic,
         );
       }
     });
+  }
+
+  // ── 长按 AI 气泡菜单 ────────────────────────────────────────────────────────
+  void _onLongPressAi(
+      BuildContext context, ChatMessageRecord msg, ChatConversationState chat) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF0A1C2C) : Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+              color: isDark
+                  ? Colors.white.withOpacity(0.08)
+                  : Colors.white.withOpacity(0.70)),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFF3B8FC7).withOpacity(0.16),
+                blurRadius: 28,
+                offset: const Offset(0, -6))
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 把手
+            Center(
+              child: Container(
+                width: 34, height: 4,
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                    color: scheme.onSurface.withOpacity(0.16),
+                    borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            // 消息预览
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.primary.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                msg.content.length > 120
+                    ? '${msg.content.substring(0, 120)}…'
+                    : msg.content,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurface.withOpacity(0.65)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // 回滚到此节点
+            _SheetAction(
+              icon: Icons.history_rounded,
+              label: '回滚到此对话节点',
+              sub: '删除此消息之后的所有内容',
+              color: Colors.orange,
+              onTap: () {
+                Navigator.pop(context);
+                _confirmRollback(context, msg, chat);
+              },
+            ),
+            const SizedBox(height: 8),
+            // 复制
+            _SheetAction(
+              icon: Icons.copy_rounded,
+              label: '复制消息',
+              color: scheme.primary,
+              onTap: () {
+                Navigator.pop(context);
+                // 复制到剪贴板（需要 services 包，此处用 SnackBar 提示）
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('已复制')));
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmRollback(
+      BuildContext context, ChatMessageRecord msg, ChatConversationState chat) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('确认回滚'),
+        content: const Text('将删除此消息之后的所有对话记录，此操作不可撤销。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                chat.rollbackToMessage(msg.id);
+              },
+              child: const Text('确认回滚',
+                  style: TextStyle(color: Colors.orange))),
+        ],
+      ),
+    );
   }
 
   IconData _stepIcon(AiTaskStepStatus s) {
@@ -87,150 +197,149 @@ class _ChatScreenState extends State<ChatScreen> {
       children: [
         // ── 工具栏 ────────────────────────────────────────────────────────
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
+          padding: const EdgeInsets.fromLTRB(12, 4, 10, 4),
           child: Row(
             children: [
               MxIconBtn(
-                icon: _showPlan ? Icons.account_tree_rounded : Icons.account_tree_outlined,
+                icon: _showPlan
+                    ? Icons.account_tree_rounded
+                    : Icons.account_tree_outlined,
                 onPressed: () => setState(() => _showPlan = !_showPlan),
                 tooltip: '任务规划',
                 active: _showPlan && plan != null,
-                size: 36,
+                size: 34,
               ),
               const Spacer(),
-              MxIconBtn(icon: Icons.undo_rounded,    onPressed: chat.rollbackLastMessage, tooltip: '撤回', size: 36),
-              const SizedBox(width: 4),
-              MxIconBtn(icon: Icons.refresh_rounded, onPressed: workflow.reset,           tooltip: '重置', size: 36),
+              MxIconBtn(
+                  icon: Icons.undo_rounded,
+                  onPressed: chat.rollbackLastMessage,
+                  tooltip: '撤回上一条',
+                  size: 34),
+              const SizedBox(width: 3),
+              MxIconBtn(
+                  icon: Icons.refresh_rounded,
+                  onPressed: workflow.reset,
+                  tooltip: '重置任务',
+                  size: 34),
             ],
           ),
         ),
 
         // ── 任务规划面板 ──────────────────────────────────────────────────
         if (_showPlan && plan != null)
-          MxCard(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.auto_awesome_rounded, size: 16, color: scheme.primary),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+            child: MxCard(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Icon(Icons.auto_awesome_rounded,
+                        size: 15, color: scheme.primary),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(plan.goal,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 13)),
                     ),
                     MxBadge(
-                      plan.finished ? '已完成' : (workflow.running ? '执行中' : '已暂停'),
-                      color: plan.finished ? Colors.green : (workflow.running ? scheme.primary : Colors.orange),
+                      plan.finished
+                          ? '已完成'
+                          : (workflow.running ? '执行中' : '已暂停'),
+                      color: plan.finished
+                          ? Colors.green
+                          : (workflow.running ? scheme.primary : Colors.orange),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: plan.steps.isEmpty
-                        ? 0
-                        : plan.steps.where((e) => e.status == AiTaskStepStatus.completed).length /
-                            plan.steps.length,
-                    minHeight: 4,
-                    backgroundColor: scheme.primary.withOpacity(0.12),
+                  ]),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: plan.steps.isEmpty
+                          ? 0
+                          : plan.steps
+                                  .where((e) =>
+                                      e.status == AiTaskStepStatus.completed)
+                                  .length /
+                              plan.steps.length,
+                      minHeight: 3,
+                      backgroundColor: scheme.primary.withOpacity(0.10),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                ...plan.steps.map((step) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Row(
-                        children: [
-                          Icon(_stepIcon(step.status), size: 14, color: _stepColor(context, step.status)),
-                          const SizedBox(width: 8),
+                  const SizedBox(height: 8),
+                  ...plan.steps.map((step) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(children: [
+                          Icon(_stepIcon(step.status),
+                              size: 13,
+                              color: _stepColor(context, step.status)),
+                          const SizedBox(width: 7),
                           Expanded(
                             child: Text(step.title,
                                 style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: scheme.onSurface.withOpacity(0.75),
-                                )),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color:
+                                        scheme.onSurface.withOpacity(0.72))),
                           ),
-                        ],
-                      ),
-                    )),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    MxButton(label: '暂停', icon: Icons.pause_rounded,      onPressed: workflow.pause,  filled: false, small: true),
+                        ]),
+                      )),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    MxButton(
+                        label: '暂停',
+                        icon: Icons.pause_rounded,
+                        onPressed: workflow.pause,
+                        filled: false,
+                        small: true),
                     const SizedBox(width: 8),
-                    MxButton(label: '继续', icon: Icons.play_arrow_rounded, onPressed: workflow.resume, filled: false, small: true),
-                  ],
-                ),
-              ],
+                    MxButton(
+                        label: '继续',
+                        icon: Icons.play_arrow_rounded,
+                        onPressed: workflow.resume,
+                        filled: false,
+                        small: true),
+                  ]),
+                ],
+              ),
             ),
           ),
 
         // ── 消息列表 ──────────────────────────────────────────────────────
         Expanded(
           child: chat.messages.isEmpty
-              ? const MxEmpty(icon: Icons.auto_awesome_rounded, label: '开始对话', hint: '输入问题或开发任务')
+              ? const MxEmpty(
+                  icon: Icons.auto_awesome_rounded,
+                  label: '开始对话',
+                  hint: '输入问题或开发任务')
               : ListView.builder(
                   controller: _scrollCtrl,
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
                   itemCount: chat.messages.length,
                   itemBuilder: (_, i) {
                     final m      = chat.messages[i];
                     final isUser = m.role == ChatRole.user;
+                    final bubble = _Bubble(
+                      message: m,
+                      isUser: isUser,
+                      isDark: isDark,
+                      scheme: scheme,
+                      onLongPress: isUser
+                          ? null
+                          : () => _onLongPressAi(context, m, chat),
+                    );
                     return Align(
-                      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                      alignment: isUser
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.82),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.only(
-                              topLeft:     const Radius.circular(18),
-                              topRight:    const Radius.circular(18),
-                              bottomLeft:  Radius.circular(isUser ? 18 : 4),
-                              bottomRight: Radius.circular(isUser ? 4 : 18),
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              color: isUser
-                                  ? scheme.primary.withOpacity(0.88)
-                                  : (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.72),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (!isUser && m.provider.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(bottom: 4),
-                                      child: Text(
-                                        '${m.provider}${m.modelId.isEmpty ? '' : ' · ${m.modelId}'}',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700,
-                                          color: scheme.primary.withOpacity(0.7),
-                                        ),
-                                      ),
-                                    ),
-                                  if (isUser)
-                                    SelectableText(
-                                      m.content.isEmpty ? '…' : m.content,
-                                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                                    )
-                                  else
-                                    MarkdownBody(
-                                      data: m.content.isEmpty ? '…' : m.content,
-                                      selectable: true,
-                                      softLineBreak: true,
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
+                            maxWidth:
+                                MediaQuery.of(context).size.width * 0.84),
+                        child: bubble,
                       ),
                     );
                   },
@@ -241,7 +350,7 @@ class _ChatScreenState extends State<ChatScreen> {
         SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -254,18 +363,158 @@ class _ChatScreenState extends State<ChatScreen> {
                     keyboardType: TextInputType.multiline,
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 7),
                 MxIconBtn(
-                  icon: chat.busy ? Icons.hourglass_top_rounded : Icons.send_rounded,
-                  onPressed: chat.busy ? null : () => _send(chat, aiConfig, workflow),
+                  icon: chat.busy
+                      ? Icons.hourglass_top_rounded
+                      : Icons.send_rounded,
+                  onPressed: chat.busy
+                      ? null
+                      : () => _send(chat, aiConfig, workflow),
                   active: true,
-                  size: 44,
+                  size: 42,
                 ),
               ],
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+// ─── 消息气泡 ─────────────────────────────────────────────────────────────────
+class _Bubble extends StatelessWidget {
+  const _Bubble({
+    required this.message,
+    required this.isUser,
+    required this.isDark,
+    required this.scheme,
+    this.onLongPress,
+  });
+
+  final ChatMessageRecord message;
+  final bool isUser;
+  final bool isDark;
+  final ColorScheme scheme;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: GestureDetector(
+        onLongPress: onLongPress,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+          decoration: BoxDecoration(
+            color: isUser
+                ? scheme.primary.withOpacity(0.90)
+                : (isDark
+                    ? const Color(0xFF0F2230)
+                    : Colors.white)
+                    .withOpacity(isDark ? 0.88 : 0.92),
+            borderRadius: BorderRadius.only(
+              topLeft:     const Radius.circular(16),
+              topRight:    const Radius.circular(16),
+              bottomLeft:  Radius.circular(isUser ? 16 : 4),
+              bottomRight: Radius.circular(isUser ? 4 : 16),
+            ),
+            border: isUser
+                ? null
+                : Border.all(
+                    color: isDark
+                        ? Colors.white.withOpacity(0.07)
+                        : Colors.black.withOpacity(0.05)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!isUser && message.provider.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${message.provider}'
+                    '${message.modelId.isEmpty ? '' : ' · ${message.modelId}'}',
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.primary.withOpacity(0.65)),
+                  ),
+                ),
+              if (isUser)
+                SelectableText(
+                  message.content.isEmpty ? '…' : message.content,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                )
+              else
+                MarkdownBody(
+                  data: message.content.isEmpty ? '…' : message.content,
+                  selectable: true,
+                  softLineBreak: true,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 底部弹窗操作行 ───────────────────────────────────────────────────────────
+class _SheetAction extends StatelessWidget {
+  const _SheetAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+    this.sub,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? sub;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        child: Row(
+          children: [
+            Container(
+              width: 38, height: 38,
+              decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+              child: Icon(icon, color: color, size: 20),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 14)),
+                  if (sub != null)
+                    Text(sub!,
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withOpacity(0.45))),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

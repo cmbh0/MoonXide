@@ -72,9 +72,20 @@ class ChatConversationState extends ChangeNotifier {
   void rollbackLastMessage() {
     if (messages.isEmpty) return;
     final last = messages.removeLast();
-    if (last.role == ChatRole.assistant && messages.isNotEmpty && messages.last.role == ChatRole.assistant) {
+    if (last.role == ChatRole.assistant &&
+        messages.isNotEmpty &&
+        messages.last.role == ChatRole.assistant) {
       messages.removeLast();
     }
+    notifyListeners();
+  }
+
+  /// 回滚到指定消息节点（保留该消息，删除其之后的所有消息）。
+  void rollbackToMessage(String id) {
+    final idx = messages.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    messages = messages.sublist(0, idx + 1);
+    busy = false;
     notifyListeners();
   }
 

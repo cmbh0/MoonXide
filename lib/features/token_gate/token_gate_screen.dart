@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -77,25 +76,22 @@ class _TokenGateScreenState extends State<TokenGateScreen> {
                   const SizedBox(height: 52),
 
                   // Logo
-                  Row(
+          // ── Logo ──────────────────────────────────────────────────────────
+          Row(
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                          child: Container(
-                            width: 58, height: 58,
-                            decoration: BoxDecoration(
-                              color: scheme.primary.withOpacity(0.14),
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                  color: Colors.white.withOpacity(isDark ? 0.14 : 0.72),
-                                  width: 1.5),
-                            ),
-                            child: Icon(Icons.terrain_rounded,
-                                color: scheme.primary, size: 28),
-                          ),
+                      Container(
+                        width: 58, height: 58,
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withOpacity(0.13),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color: isDark
+                                  ? Colors.white.withOpacity(0.12)
+                                  : Colors.white.withOpacity(0.75),
+                              width: 1.5),
                         ),
+                        child: Icon(Icons.terrain_rounded,
+                            color: scheme.primary, size: 28),
                       ),
                       const SizedBox(width: 14),
                       Column(
@@ -260,12 +256,9 @@ class _Blob extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ImageFiltered(
-      imageFilter: ImageFilter.blur(sigmaX: 48, sigmaY: 48),
-      child: Container(
-        width: size, height: size,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-      ),
+    return Container(
+      width: size, height: size,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
     );
   }
 }
