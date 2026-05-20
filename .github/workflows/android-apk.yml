@@ -41,7 +41,23 @@ jobs:
           cache: false
 
       - name: Generate Android platform
-        run: flutter create . --platforms=android --project-name moonxide
+        run: |
+          flutter create . --platforms=android --project-name moonxide
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          permissions = [
+              'android.permission.INTERNET',
+              'android.permission.ACCESS_NETWORK_STATE',
+          ]
+          insert = ''.join(f'    <uses-permission android:name="{p}" />\n' for p in permissions if f'android:name="{p}"' not in text)
+          if insert:
+              idx = text.find('>') + 1
+              text = text[:idx] + '\n' + insert + text[idx:]
+              manifest.write_text(text)
+          print(manifest.read_text())
+          PY
 
       - name: Install dependencies
         run: |
