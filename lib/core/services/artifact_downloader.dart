@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
 
 class ArtifactDownloader {
   final Dio dio;
@@ -8,8 +7,7 @@ class ArtifactDownloader {
   ArtifactDownloader({Dio? dio}) : dio = dio ?? Dio();
 
   Future<String> download({required String url, required String token, required String fileName}) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final outDir = Directory('${dir.path}/moonxide_artifacts');
+    final outDir = Directory('/sdcard/Download/MoonXide');
     if (!await outDir.exists()) await outDir.create(recursive: true);
     final path = '${outDir.path}/$fileName';
     await dio.download(

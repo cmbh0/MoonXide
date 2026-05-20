@@ -20,7 +20,7 @@ class BuildScreen extends StatelessWidget {
       build.setStatus('请先选择仓库');
       return;
     }
-    build.setStatus('正在触发 GitHub Actions…');
+    build.start('正在触发 GitHub Actions…');
     try {
       await state.github!.dispatchWorkflow(
         owner: owner, repo: repo,
@@ -31,9 +31,9 @@ class BuildScreen extends StatelessWidget {
           'release_tag':      'latest',
         },
       );
-      build.setStatus('已触发构建，等待 GitHub Actions 响应…');
+      build.updateProgress(statusText: '已触发构建，等待 GitHub Actions 响应…', value: 0.12);
     } catch (e) {
-      build.setStatus('触发失败：$e');
+      build.fail('触发失败：$e');
     }
   }
 
@@ -50,8 +50,16 @@ class BuildScreen extends StatelessWidget {
       final status     = run['status'];
       final conclusion = run['conclusion'];
       final htmlUrl    = run['html_url'];
-      build.setStatus('状态：$status\n结果：${conclusion ?? '运行中'}\n$htmlUrl');
+      final progress = status == 'completed'
+          ? 1.0
+          : (status == 'in_progress' ? 0.55 : 0.22);
+      build.updateProgress(
+        statusText: '状态：$status\n结果：${conclusion ?? '运行中'}\n$htmlUrl',
+        value: progress,
+        runUrl: htmlUrl?.toString(),
+      );
       if (status == 'completed' && conclusion == 'success') {
+        build.finish('构建完成：success\n$htmlUrl');
         final artifacts = await state.github!.listArtifacts(owner, repo, run['id'] as int);
         if (artifacts.isNotEmpty) {
           build.setArtifact(downloadUrl: artifacts.first['archive_download_url'] as String?);
@@ -59,6 +67,7 @@ class BuildScreen extends StatelessWidget {
         build.setLog(null);
       }
       if (status == 'completed' && conclusion != 'success') {
+        build.fail('构建失败：${conclusion ?? 'unknown'}\n$htmlUrl');
         final bytes   = await state.github!.downloadRunLogs(owner, repo, run['id'] as int);
         final summary = LogParser().summarize(String.fromCharCodes(bytes));
         build.setLog(summary);

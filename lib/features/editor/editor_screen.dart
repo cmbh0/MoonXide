@@ -13,7 +13,7 @@ class EditorScreen extends StatefulWidget {
 }
 
 class EditorScreenState extends State<EditorScreen> {
-  final contentController = TextEditingController();
+  final contentController = _CodeController();
   final searchController  = TextEditingController();
   final replaceController = TextEditingController();
   bool showFind = false;
@@ -41,7 +41,7 @@ class EditorScreenState extends State<EditorScreen> {
     final owner  = app.selectedOwner;
     final repo   = app.selectedRepo;
     if (owner == null || repo == null || app.github == null ||
-        editor.currentPath.isEmpty) return;
+        editor.currentPath.isEmpty || editor.readOnly) return;
     try {
       String? sha;
       try {
@@ -57,6 +57,7 @@ class EditorScreenState extends State<EditorScreen> {
         sha: sha,
       );
       editor.openFile(editor.currentPath, contentController.text);
+      editor.markSaved();
       if (ctx.mounted) {
         ScaffoldMessenger.of(ctx).showSnackBar(
             const SnackBar(content: Text('已保存并提交到 GitHub')));
@@ -93,6 +94,7 @@ class EditorScreenState extends State<EditorScreen> {
   @override
   Widget build(BuildContext context) {
     final editor = context.watch<EditorState>();
+    final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     _sync(editor);
     final lineCount = contentController.text.isEmpty
@@ -103,6 +105,12 @@ class EditorScreenState extends State<EditorScreen> {
     final gutterText  = isDark ? const Color(0xFF4A6A80) : const Color(0xFF8A9BAA);
     final editorBg    = isDark ? const Color(0xFF0A1929) : const Color(0xFFFAFDFF);
     final editorText  = isDark ? const Color(0xFFD4E8F5) : const Color(0xFF1A2B38);
+    contentController.baseStyle = TextStyle(
+        fontFamily: 'monospace', fontSize: 14, height: 1.55, color: editorText);
+    contentController.keywordColor = isDark ? const Color(0xFF82AAFF) : const Color(0xFF245BCB);
+    contentController.stringColor = isDark ? const Color(0xFFC3E88D) : const Color(0xFF22863A);
+    contentController.commentColor = isDark ? const Color(0xFF637777) : const Color(0xFF6A737D);
+    final diagnostics = editor.diagnostics;
     final dividerColor= isDark ? const Color(0xFF1A3448) : const Color(0xFFD8E8F0);
 
     return Column(
@@ -169,16 +177,13 @@ class EditorScreenState extends State<EditorScreen> {
               Expanded(
                 child: TextField(
                   controller: contentController,
+                  readOnly: editor.readOnly,
                   expands: true,
                   maxLines: null,
                   minLines: null,
                   keyboardType: TextInputType.multiline,
                   textAlignVertical: TextAlignVertical.top,
-                  style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 14,
-                      height: 1.55,
-                      color: editorText),
+                  style: contentController.baseStyle,
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: editorBg,
@@ -195,9 +200,38 @@ class EditorScreenState extends State<EditorScreen> {
                   onChanged: editor.updateContent,
                 ),
               ),
+              Container(
+                width: 42,
+                color: editorBg.withOpacity(0.82),
+                child: _MiniMap(text: contentController.text, color: editorText),
+              ),
             ],
           ),
         ),
+
+        if (editor.readOnly)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            color: isDark ? const Color(0xFF26313A) : const Color(0xFFEAF4FF),
+            child: Text('只读：${editor.readOnlyReason ?? '预览模式'}', style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w800)),
+          ),
+
+        if (diagnostics.isNotEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            color: isDark ? const Color(0xFF132536) : const Color(0xFFFFF8E8),
+            child: Text(
+              '${editor.language} · ${diagnostics.length} 个提示：${diagnostics.first.message}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: diagnostics.first.severity == 'error' ? Colors.red : const Color(0xFFE08A00),
+              ),
+            ),
+          ),
 
         // ── 符号快捷栏 ────────────────────────────────────────────────────────
         _SymbolBar(
@@ -256,6 +290,69 @@ class _SymbolBar extends StatelessWidget {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+
+class _CodeController extends TextEditingController {
+  TextStyle baseStyle = const TextStyle(fontFamily: 'monospace', fontSize: 14);
+  Color keywordColor = Colors.blue;
+  Color stringColor = Colors.green;
+  Color commentColor = Colors.grey;
+
+  static final _kw = RegExp(r'\b(class|void|final|const|var|return|if|else|for|while|switch|case|break|continue|import|package|new|public|private|static|fun|val|def|async|await|try|catch|throw|extends|implements)\b');
+  static final _str = RegExp(r'''("[^"\n]*"|'[^'\n]*')''');
+  static final _comment = RegExp(r'(//.*|#.*)');
+
+  @override
+  TextSpan buildTextSpan({required BuildContext context, TextStyle? style, required bool withComposing}) {
+    final text = value.text;
+    final spans = <TextSpan>[];
+    final matches = <RegExpMatch>[];
+    matches.addAll(_kw.allMatches(text));
+    matches.addAll(_str.allMatches(text));
+    matches.addAll(_comment.allMatches(text));
+    matches.sort((a, b) => a.start.compareTo(b.start));
+    var i = 0;
+    for (final m in matches) {
+      if (m.start < i) continue;
+      if (m.start > i) spans.add(TextSpan(text: text.substring(i, m.start), style: baseStyle));
+      final token = text.substring(m.start, m.end);
+      final color = _comment.hasMatch(token) ? commentColor : (_str.hasMatch(token) ? stringColor : keywordColor);
+      spans.add(TextSpan(text: token, style: baseStyle.copyWith(color: color, fontWeight: _kw.hasMatch(token) ? FontWeight.w700 : null)));
+      i = m.end;
+    }
+    if (i < text.length) spans.add(TextSpan(text: text.substring(i), style: baseStyle));
+    return TextSpan(style: baseStyle, children: spans);
+  }
+}
+
+class _MiniMap extends StatelessWidget {
+  const _MiniMap({required this.text, required this.color});
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.split('\n').take(180).toList();
+    return IgnorePointer(
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        itemCount: lines.length,
+        itemBuilder: (_, i) {
+          final w = (lines[i].trimRight().length.clamp(4, 60) as num).toDouble() / 60.0;
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 1),
+              width: 32 * w,
+              height: 2,
+              decoration: BoxDecoration(color: color.withOpacity(0.24), borderRadius: BorderRadius.circular(2)),
+            ),
+          );
+        },
       ),
     );
   }

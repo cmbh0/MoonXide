@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/editor_state.dart';
 import '../../core/services/local_file_upload_service.dart';
+import '../package_editor/package_editor_screen.dart';
 
 class _TreeNode {
   final String name;
@@ -37,8 +39,14 @@ class WorkspaceScreen extends StatefulWidget {
 }
 
 class _WorkspaceScreenState extends State<WorkspaceScreen> {
-  List<Map<String, dynamic>> _repos = [];
+  static List<Map<String, dynamic>> _cachedRepos = [];
+  static final Map<String, List<_TreeNode>> _cachedTree = {};
+  static String? _cachedRepoKey;
+
+  List<Map<String, dynamic>> _repos = _cachedRepos;
   List<_TreeNode> _roots = [];
+  final Map<String, List<_TreeNode>> _treeCache = _cachedTree;
+  String? _loadedRepoKey = _cachedRepoKey;
   bool _loadingRepos = false;
   bool _loadingTree = false;
   String? _error;
@@ -52,6 +60,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   @override
   void initState() {
     super.initState();
+    final owner = widget.state.selectedOwner;
+    final repo = widget.state.selectedRepo;
+    final key = owner != null && repo != null ? '$owner/$repo' : null;
+    if (key != null && key == _cachedRepoKey && _cachedTree.containsKey('')) {
+      _roots = _cachedTree['']!;
+      _loadedRepoKey = key;
+    }
     _fetchRepos();
   }
 
@@ -63,11 +78,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     super.dispose();
   }
 
-  Future<void> _fetchRepos() async {
+  Future<void> _fetchRepos({bool force = false}) async {
     if (widget.state.github == null) return;
+    if (!force && _repos.isNotEmpty) return;
     setState(() { _loadingRepos = true; _error = null; });
     try {
       _repos = await widget.state.github!.listRepositories();
+      _cachedRepos = _repos;
     } catch (e) {
       _error = '仓库加载失败：$e';
     }
@@ -75,15 +92,38 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<void> _selectRepo(String owner, String name) async {
+    final key = '$owner/$name';
     widget.state.selectRepository(owner, name);
+    if (_loadedRepoKey == key && _treeCache.containsKey('')) {
+      setState(() => _roots = _treeCache['']!);
+      return;
+    }
     setState(() => _roots = []);
-    await _fetchTree('');
+    _loadedRepoKey = key;
+    _cachedRepoKey = key;
+    await _fetchTree('', force: false);
   }
 
-  Future<void> _fetchTree(String path) async {
+  Future<void> _fetchTree(String path, {bool force = false}) async {
     final owner = widget.state.selectedOwner;
     final repo = widget.state.selectedRepo;
     if (owner == null || repo == null || widget.state.github == null) return;
+    final repoKey = '$owner/$repo';
+    if (_loadedRepoKey != repoKey) {
+      _treeCache.clear();
+      _cachedTree.clear();
+      _loadedRepoKey = repoKey;
+      _cachedRepoKey = repoKey;
+    }
+    if (!force && _treeCache.containsKey(path)) {
+      if (path.isEmpty) {
+        setState(() => _roots = _treeCache[path]!);
+      } else {
+        _insertChildren(_roots, path, _treeCache[path]!);
+        setState(() {});
+      }
+      return;
+    }
     setState(() { _loadingTree = true; _error = null; });
     try {
       final data = await widget.state.github!.getContents(owner, repo, path: path);
@@ -103,6 +143,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       } else {
         _insertChildren(_roots, path, nodes);
       }
+      _treeCache[path] = nodes;
     } catch (e) {
       _error = '文件树加载失败：$e';
     }
@@ -138,11 +179,29 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final repo = widget.state.selectedRepo;
     if (owner == null || repo == null || widget.state.github == null || node.isDir) return;
     try {
+      final name = node.name.toLowerCase();
+      final binaryExt = ['png','jpg','jpeg','webp','gif','pdf','zip','apk','jar','so','a','dex','exe','bin','keystore','jks'];
+      final ext = name.contains('.') ? name.split('.').last : '';
+      if (binaryExt.contains(ext)) {
+        if (!mounted) return;
+        context.read<EditorState>().openFile(node.path, '二进制/资源文件无法在文本编辑器中直接编辑。\n\n文件：${node.path}\n类型：$ext', readOnlyFile: true, reason: '二进制文件');
+        return;
+      }
       final file = await widget.state.github!.getFile(owner, repo, node.path);
+      final size = (file['size'] as num?)?.toInt() ?? 0;
       final raw = (file['content'] as String).replaceAll('\n', '');
-      final content = utf8.decode(base64Decode(raw));
+      final content = utf8.decode(base64Decode(raw), allowMalformed: true);
       if (!mounted) return;
-      context.read<EditorState>().openFile(node.path, content);
+      if (size > 512 * 1024 || content.length > 600000) {
+        context.read<EditorState>().openFile(
+          node.path,
+          '${content.substring(0, content.length > 120000 ? 120000 : content.length)}\n\n/* 大文件已分页截断预览，仅展示前 120KB，避免移动端渲染卡顿。请使用 AI 或下载后处理完整文件。 */',
+          readOnlyFile: true,
+          reason: '大文件预览模式',
+        );
+      } else {
+        context.read<EditorState>().openFile(node.path, content);
+      }
     } catch (e) {
       setState(() => _error = '打开失败：$e');
     }
@@ -164,7 +223,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         message: 'Upload ${file.name}',
         contentBase64: base64Encode(bytes),
       );
-      await _fetchTree('');
+      await _fetchTree('', force: true);
     } catch (e) {
       setState(() => _error = '上传失败：$e');
     }
@@ -185,8 +244,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       widget.state.selectRepository(owner, name);
       _nameCtrl.clear();
       _descCtrl.clear();
-      await _fetchRepos();
-      await _fetchTree('');
+      await _fetchRepos(force: true);
+      await _fetchTree('', force: true);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       setState(() => _error = '创建失败：$e');
@@ -203,8 +262,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       final r = await widget.state.github!.renameRepository(owner, repo, next);
       final newName = r['name'] as String;
       widget.state.selectRepository(owner, newName);
-      await _fetchRepos();
-      await _fetchTree('');
+      await _fetchRepos(force: true);
+      await _fetchTree('', force: true);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       setState(() => _error = '重命名失败：$e');
@@ -219,7 +278,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       await widget.state.github!.deleteRepository(owner, repo);
       widget.state.clearRepositorySelection();
       setState(() => _roots = []);
-      await _fetchRepos();
+      _treeCache.clear();
+      await _fetchRepos(force: true);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       setState(() => _error = '删除失败：$e');
@@ -245,9 +305,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   void _showManageSheet() {
     final repo = widget.state.selectedRepo;
+    final owner = widget.state.selectedOwner;
     if (repo == null || repo.isEmpty) return;
     _renameCtrl.text = repo;
     _showSheet(title: '仓库管理', children: [
+      if (owner != null) ...[
+        MxButton(label: '复制仓库链接', icon: Icons.link_rounded, filled: false, onPressed: () async {
+          await Clipboard.setData(ClipboardData(text: 'https://github.com/$owner/$repo.git'));
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制仓库链接')));
+        }),
+        const SizedBox(height: 10),
+      ],
       MxTextField(controller: _renameCtrl, hint: '新仓库名称', prefix: const Icon(Icons.drive_file_rename_outline_rounded, size: 17)),
       const SizedBox(height: 10),
       MxButton(label: '重命名仓库', icon: Icons.edit_rounded, onPressed: _renameRepo),
@@ -327,11 +395,24 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           selected: selected,
           loading: _loadingRepos,
           onSelect: (r) => _selectRepo(r['owner']['login'] as String, r['name'] as String),
-          onRefresh: _fetchRepos,
+          onRefresh: () async { _treeCache.clear(); await _fetchRepos(force: true); if (selected != null && selected.isNotEmpty) await _fetchTree('', force: true); },
           onNew: _showCreateSheet,
           onUpload: _upload,
           onManage: _showManageSheet,
           canManage: selected != null && selected.isNotEmpty,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 2),
+          child: MxCard(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PackageEditorScreen())),
+            child: Row(children: [
+              Icon(Icons.apps_rounded, size: 16, color: scheme.primary),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('安装包编辑 / 编译模板', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800))),
+              Icon(Icons.chevron_right_rounded, size: 16, color: scheme.onSurface.withOpacity(0.35)),
+            ]),
+          ),
         ),
         if (_error != null)
           Padding(
@@ -388,29 +469,19 @@ class _RepoBar extends StatelessWidget {
         Expanded(
           child: repos.isEmpty
               ? Text(loading ? '加载仓库中…' : '暂无仓库', style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.45)))
-              : DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: selected == null || selected!.isEmpty ? null : selected,
-                    hint: Text('选择仓库', style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.45))),
-                    icon: Icon(Icons.expand_more_rounded, size: 16, color: scheme.primary),
-                    dropdownColor: isDark ? const Color(0xFF0A1C2C) : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    isDense: true,
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onSurface),
-                    items: repos.map((r) => DropdownMenuItem<String>(
-                      value: r['name'] as String,
-                      child: Row(children: [
-                        Icon(r['private'] == true ? Icons.lock_rounded : Icons.folder_open_rounded, size: 14, color: scheme.primary),
-                        const SizedBox(width: 6),
-                        Flexible(child: Text(r['name'] as String, overflow: TextOverflow.ellipsis)),
-                      ]),
-                    )).toList(),
-                    onChanged: (name) {
-                      if (name == null) return;
-                      final r = repos.firstWhere((e) => e['name'] == name);
-                      onSelect(r);
-                    },
-                  ),
+              : MxDropdown<String>(
+                  value: selected == null || selected!.isEmpty ? null : selected,
+                  hint: '点击选择仓库',
+                  items: repos.map((r) => MxDropdownItem<String>(
+                    value: r['name'] as String,
+                    label: r['name'] as String,
+                    icon: r['private'] == true ? Icons.lock_rounded : Icons.folder_open_rounded,
+                  )).toList(),
+                  onChanged: (name) {
+                    if (name == null) return;
+                    final r = repos.firstWhere((e) => e['name'] == name);
+                    onSelect(r);
+                  },
                 ),
         ),
         MxIconBtn(icon: Icons.upload_rounded, onPressed: onUpload, tooltip: '上传', size: 32),
@@ -445,27 +516,57 @@ class _TreeTile extends StatelessWidget {
 
   IconData _icon() {
     if (node.isDir) return node.expanded ? Icons.folder_open_rounded : Icons.folder_rounded;
-    final ext = node.name.contains('.') ? node.name.split('.').last.toLowerCase() : '';
+    final lower = node.name.toLowerCase();
+    if (lower == 'package.json') return Icons.inventory_2_rounded;
+    if (lower == 'dockerfile') return Icons.directions_boat_rounded;
+    if (lower == '.gitignore') return Icons.hide_source_rounded;
+    if (lower == 'pubspec.yaml' || lower == 'pubspec.yml') return Icons.flutter_dash;
+    if (lower == 'gradle.properties' || lower == 'settings.gradle' || lower == 'build.gradle') return Icons.precision_manufacturing_rounded;
+    final ext = lower.contains('.') ? lower.split('.').last : '';
     switch (ext) {
       case 'dart': return Icons.flutter_dash;
-      case 'kt': case 'java': return Icons.code_rounded;
-      case 'json': case 'yaml': case 'yml': return Icons.data_object_rounded;
+      case 'js': case 'mjs': case 'cjs': return Icons.data_object_rounded;
+      case 'ts': return Icons.code_rounded;
+      case 'py': return Icons.smart_toy_rounded;
+      case 'java': return Icons.local_cafe_rounded;
+      case 'kt': case 'kts': return Icons.android_rounded;
+      case 'c': case 'h': return Icons.memory_rounded;
+      case 'cpp': case 'cc': case 'cxx': case 'hpp': return Icons.developer_board_rounded;
+      case 'html': return Icons.web_asset_rounded;
+      case 'css': return Icons.palette_rounded;
+      case 'json': return Icons.data_object_rounded;
+      case 'yaml': case 'yml': return Icons.tune_rounded;
+      case 'xml': return Icons.code_rounded;
       case 'md': return Icons.article_rounded;
-      case 'png': case 'jpg': case 'jpeg': case 'svg': return Icons.image_rounded;
-      case 'gradle': case 'xml': return Icons.settings_rounded;
+      case 'sh': case 'bash': return Icons.terminal_rounded;
+      case 'png': case 'jpg': case 'jpeg': case 'svg': case 'webp': return Icons.image_rounded;
+      case 'gradle': return Icons.precision_manufacturing_rounded;
       default: return Icons.insert_drive_file_rounded;
     }
   }
 
   Color _iconColor() {
     if (node.isDir) return const Color(0xFFF5A623);
-    final ext = node.name.contains('.') ? node.name.split('.').last.toLowerCase() : '';
+    final lower = node.name.toLowerCase();
+    if (lower == 'package.json') return const Color(0xFFCB3837);
+    if (lower == 'dockerfile') return const Color(0xFF2496ED);
+    if (lower == '.gitignore') return const Color(0xFFF05032);
+    if (lower.startsWith('pubspec')) return const Color(0xFF54C5F8);
+    final ext = lower.contains('.') ? lower.split('.').last : '';
     switch (ext) {
       case 'dart': return const Color(0xFF54C5F8);
-      case 'kt': return const Color(0xFF7F52FF);
+      case 'js': case 'mjs': case 'cjs': return const Color(0xFFF7DF1E);
+      case 'ts': return const Color(0xFF3178C6);
+      case 'py': return const Color(0xFF3776AB);
       case 'java': return const Color(0xFFED8B00);
+      case 'kt': case 'kts': return const Color(0xFF7F52FF);
+      case 'c': case 'h': return const Color(0xFFA8B9CC);
+      case 'cpp': case 'cc': case 'cxx': case 'hpp': return const Color(0xFF00599C);
+      case 'html': return const Color(0xFFE34F26);
+      case 'css': return const Color(0xFF1572B6);
       case 'json': case 'yaml': case 'yml': return const Color(0xFF6DB33F);
       case 'md': return const Color(0xFF519ABA);
+      case 'sh': case 'bash': return const Color(0xFF4EAA25);
       default: return scheme.onSurface.withOpacity(0.50);
     }
   }

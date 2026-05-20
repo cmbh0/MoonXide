@@ -52,6 +52,21 @@ class GithubService {
 
   Future<Map<String, dynamic>> getCurrentUser() async => Map<String, dynamic>.from(await _request('GET', '/user'));
 
+  Future<List<Map<String, dynamic>>> listStarredRepositories({int perPage = 100}) async {
+    final data = await _request('GET', '/user/starred?per_page=$perPage&sort=updated');
+    return List<Map<String, dynamic>>.from(data as List);
+  }
+
+  Future<List<Map<String, dynamic>>> listFollowers(String user, {int perPage = 30}) async {
+    final data = await _request('GET', '/users/$user/followers?per_page=$perPage');
+    return List<Map<String, dynamic>>.from(data as List);
+  }
+
+  Future<List<Map<String, dynamic>>> listFollowing(String user, {int perPage = 30}) async {
+    final data = await _request('GET', '/users/$user/following?per_page=$perPage');
+    return List<Map<String, dynamic>>.from(data as List);
+  }
+
   Future<List<Map<String, dynamic>>> listRepositories() async {
     final data = await _request('GET', '/user/repos?per_page=100&type=owner&sort=updated');
     return List<Map<String, dynamic>>.from(data as List);
@@ -111,6 +126,15 @@ class GithubService {
   Future<List<Map<String, dynamic>>> listReleases(String owner, String repo) async {
     final data = await _request('GET', '/repos/$owner/$repo/releases?per_page=30');
     return List<Map<String, dynamic>>.from(data as List);
+  }
+
+  Future<void> uploadReleaseAsset({required String uploadUrl, required String name, required List<int> bytes}) async {
+    final base = uploadUrl.split('{').first;
+    final uri = Uri.parse('$base?name=${Uri.encodeQueryComponent(name)}');
+    final res = await http.post(uri, headers: {..._headers, 'Content-Type': 'application/octet-stream'}, body: bytes).timeout(const Duration(seconds: 60));
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('上传发行文件失败 ${res.statusCode}: ${res.body}');
+    }
   }
 
   /// 删除仓库（不可逆）

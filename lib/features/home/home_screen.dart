@@ -1,15 +1,19 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app/moonxide_theme.dart';
 import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/editor_state.dart';
+import '../../core/services/build_center_state.dart';
 import '../workspace/workspace_screen.dart';
 import '../editor/editor_screen.dart';
 import '../chat/chat_screen.dart';
 import '../build/build_screen.dart';
 import '../release/release_screen.dart';
 import '../settings/settings_screen.dart';
+import '../profile/profile_screen.dart';
 
 enum _LeftPanel  { none, workspace }
 enum _RightPanel { none, ai, build, release, settings }
@@ -29,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late final AnimationController _rightAnim;
   late final Animation<double>   _leftSlide;
   late final Animation<double>   _rightSlide;
+  Timer? _buildPollTimer;
 
   // GlobalKey 用于调用 EditorScreen 的方法
   final _editorKey = GlobalKey<EditorScreenState>();
@@ -47,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     _leftAnim.dispose();
     _rightAnim.dispose();
+    _buildPollTimer?.cancel();
     super.dispose();
   }
 
@@ -72,6 +78,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _rightAnim.reverse().then((_) {
       if (mounted) setState(() => _right = _RightPanel.none);
     });
+  }
+
+  Future<void> _pollBuild(AppState state, BuildCenterState build) async {
+    final owner = state.selectedOwner;
+    final repo = state.selectedRepo;
+    if (!build.busy || owner == null || repo == null || state.github == null) return;
+    try {
+      final runs = await state.github!.listWorkflowRuns(owner, repo);
+      if (runs.isEmpty) return;
+      final run = runs.first;
+      final status = run['status'];
+      final conclusion = run['conclusion'];
+      final url = run['html_url']?.toString();
+      final progress = status == 'completed' ? 1.0 : (status == 'in_progress' ? 0.62 : 0.25);
+      if (status == 'completed' && conclusion == 'success') {
+        build.finish('构建完成：success');
+        final artifacts = await state.github!.listArtifacts(owner, repo, run['id'] as int);
+        if (artifacts.isNotEmpty) build.setArtifact(downloadUrl: artifacts.first['archive_download_url'] as String?);
+      } else if (status == 'completed') {
+        build.fail('构建结束：${conclusion ?? 'unknown'}');
+      } else {
+        build.updateProgress(statusText: '构建中：$status', value: progress, runUrl: url);
+      }
+    } catch (_) {}
+  }
+
+  void _ensureBuildPolling(AppState state, BuildCenterState build) {
+    if (!build.busy) {
+      _buildPollTimer?.cancel();
+      _buildPollTimer = null;
+      return;
+    }
+    _buildPollTimer ??= Timer.periodic(const Duration(minutes: 2), (_) => _pollBuild(state, build));
   }
 
   String _rightTitle() {
@@ -167,6 +206,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final state  = context.watch<AppState>();
+    final build  = context.watch<BuildCenterState>();
     final editor = context.watch<EditorState>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
@@ -179,11 +219,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     // 工具栏总高 = 状态栏 + 固定高度
     final toolbarTotal = topPad + _toolbarH;
+    _ensureBuildPolling(state, build);
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF071722) : MoonXideTheme.snow,
       body: Stack(
         children: [
+          if (state.customBackgroundPath != null)
+            Positioned.fill(
+              child: Image.file(
+                File(state.customBackgroundPath!),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+          if (state.customBackgroundPath != null)
+            Positioned.fill(
+              child: ColoredBox(color: (isDark ? Colors.black : Colors.white).withOpacity(isDark ? 0.68 : 0.72)),
+            ),
           // ── 编辑器全屏底层（顶部留出工具栏空间） ──────────────────────────────
           Positioned(
             top: toolbarTotal,
@@ -202,6 +255,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               scheme: scheme,
               topPad: topPad,
               editor: editor,
+              state: state,
               leftOpen: _left == _LeftPanel.workspace,
               rightPanel: _right,
               onMenuTap: () => _openLeft(_LeftPanel.workspace),
@@ -210,6 +264,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               onReleaseTap: () => _openRight(_RightPanel.release),
               onSettingsTap:() => _openRight(_RightPanel.settings),
               onSearchTap:  () => _editorKey.currentState?.toggleFind(),
+              onUndoTap:    editor.undo,
+              onRedoTap:    editor.redo,
               onSaveTap:    () {
                 final st = _editorKey.currentState;
                 if (st != null) st.save(context);
@@ -274,6 +330,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 child: _buildRightContent(state),
               ),
             ),
+
+          // ── 右下角构建迷你通知条 ─────────────────────────────────────────────
+          if (build.busy)
+            Positioned(
+              right: 12,
+              bottom: 14,
+              child: _BuildToast(build: build),
+            ),
         ],
       ),
     );
@@ -287,6 +351,7 @@ class _TopBar extends StatelessWidget {
     required this.scheme,
     required this.topPad,
     required this.editor,
+    required this.state,
     required this.leftOpen,
     required this.rightPanel,
     required this.onMenuTap,
@@ -295,6 +360,8 @@ class _TopBar extends StatelessWidget {
     required this.onReleaseTap,
     required this.onSettingsTap,
     required this.onSearchTap,
+    required this.onUndoTap,
+    required this.onRedoTap,
     required this.onSaveTap,
   });
 
@@ -302,6 +369,7 @@ class _TopBar extends StatelessWidget {
   final ColorScheme scheme;
   final double topPad;
   final EditorState editor;
+  final AppState state;
   final bool leftOpen;
   final _RightPanel rightPanel;
   final VoidCallback onMenuTap;
@@ -310,6 +378,8 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onReleaseTap;
   final VoidCallback onSettingsTap;
   final VoidCallback onSearchTap;
+  final VoidCallback onUndoTap;
+  final VoidCallback onRedoTap;
   final VoidCallback onSaveTap;
 
   @override
@@ -346,6 +416,19 @@ class _TopBar extends StatelessWidget {
               onPressed: onSearchTap,
               tooltip: '查找替换',
               size: 36,
+            ),
+            const SizedBox(width: 2),
+            MxIconBtn(
+              icon: Icons.undo_rounded,
+              onPressed: editor.canUndo ? onUndoTap : null,
+              tooltip: '撤销',
+              size: 34,
+            ),
+            MxIconBtn(
+              icon: Icons.redo_rounded,
+              onPressed: editor.canRedo ? onRedoTap : null,
+              tooltip: '重做',
+              size: 34,
             ),
             const SizedBox(width: 2),
             // 保存（有修改时高亮）
@@ -431,9 +514,88 @@ class _TopBar extends StatelessWidget {
               onPressed: onSettingsTap,
               tooltip: '设置',
               active: rightPanel == _RightPanel.settings,
-              size: 36,
+              size: 34,
             ),
             const SizedBox(width: 4),
+            _AvatarButton(state: state),
+            const SizedBox(width: 4),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AvatarButton extends StatelessWidget {
+  const _AvatarButton({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: 'GitHub 主页',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => ProfileScreen(state: state)),
+        ),
+        child: Container(
+          width: 34,
+          height: 34,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: scheme.primary.withOpacity(0.45), width: 1.4),
+            boxShadow: [BoxShadow(color: scheme.primary.withOpacity(0.12), blurRadius: 10)],
+          ),
+          child: CircleAvatar(
+            backgroundColor: scheme.primary.withOpacity(0.12),
+            backgroundImage: state.avatarUrl == null ? null : NetworkImage(state.avatarUrl!),
+            child: state.avatarUrl == null ? Icon(Icons.person_rounded, size: 18, color: scheme.primary) : null,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BuildToast extends StatelessWidget {
+  const _BuildToast({required this.build});
+  final BuildCenterState build;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 230,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.74),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: scheme.primary.withOpacity(0.22)),
+          boxShadow: [BoxShadow(color: scheme.primary.withOpacity(0.18), blurRadius: 22, offset: const Offset(0, 8))],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(scheme.primary))),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('正在构建', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900))),
+              Text('${(build.progress * 100).round()}%', style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w900)),
+            ]),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(99),
+              child: LinearProgressIndicator(value: build.progress <= 0 ? null : build.progress, minHeight: 4),
+            ),
+            const SizedBox(height: 6),
+            Text(build.status.split('\n').first, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: scheme.onSurface.withOpacity(0.62))),
           ],
         ),
       ),

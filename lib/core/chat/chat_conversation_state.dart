@@ -11,7 +11,7 @@ import 'chat_role.dart';
 class ChatConversationState extends ChangeNotifier {
   final ChatMemoryFileStore store;
   final ChatCompressor compressor;
-  final String conversationId;
+  String conversationId;
   final int compressEvery;
 
   List<ChatMessageRecord> messages = [];
@@ -66,6 +66,35 @@ class ChatConversationState extends ChangeNotifier {
     busy = false;
     await _autoCompress(aiConfig);
     await _persist();
+    notifyListeners();
+  }
+
+  void newConversation() {
+    conversationId = const Uuid().v4();
+    messages.clear();
+    summary = '';
+    busy = false;
+    notifyListeners();
+  }
+
+  Future<void> loadHistoryAsContext(String conversationId) async {
+    final text = await store.read(conversationId);
+    if (text.trim().isEmpty) return;
+    this.conversationId = conversationId;
+    messages = [
+      ChatMessageRecord(
+        id: const Uuid().v4(),
+        role: ChatRole.assistant,
+        content: '已载入历史对话作为记忆上下文：\n\n```text\n${text.length > 6000 ? text.substring(0, 6000) : text}\n```',
+        createdAt: DateTime.now(),
+      )
+    ];
+    summary = text.length > 3000 ? text.substring(0, 3000) : text;
+    notifyListeners();
+  }
+
+  Future<void> deleteHistory(String conversationId) async {
+    await store.delete(conversationId);
     notifyListeners();
   }
 

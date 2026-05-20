@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/build_profile.dart';
 import 'github_service.dart';
 import 'token_store.dart';
@@ -13,6 +14,9 @@ class AppState extends ChangeNotifier {
   String? login;
   String? selectedOwner;
   String? selectedRepo;
+  String? avatarUrl;
+  Map<String, dynamic>? currentUser;
+  String? customBackgroundPath;
   bool loading = false;
   bool tokenValidated = false;
   String? tokenStatus;
@@ -22,6 +26,8 @@ class AppState extends ChangeNotifier {
   AppState({required this.tokenStore});
 
   Future<void> restore() async {
+    final prefs = await SharedPreferences.getInstance();
+    customBackgroundPath = prefs.getString('custom_background_path');
     token = await tokenStore.readToken();
     if (token == null || token!.isEmpty) return;
     github = GithubService(token: token!);
@@ -36,6 +42,8 @@ class AppState extends ChangeNotifier {
     try {
       final user = await github!.getCurrentUser();
       login = user['login'] as String?;
+      avatarUrl = user['avatar_url'] as String?;
+      currentUser = Map<String, dynamic>.from(user);
       selectedOwner = login;
       tokenValidated = true;
       tokenStatus = login == null ? 'Token 验证成功' : 'Token 验证成功：$login';
@@ -77,6 +85,8 @@ class AppState extends ChangeNotifier {
     try {
       final user = await service.getCurrentUser();
       login = user['login'] as String?;
+      avatarUrl = user['avatar_url'] as String?;
+      currentUser = Map<String, dynamic>.from(user);
       selectedOwner = login;
       tokenValidated = true;
       tokenStatus = login == null ? 'Token 验证成功' : 'Token 验证成功：$login';
@@ -121,6 +131,8 @@ class AppState extends ChangeNotifier {
     token = null;
     github = null;
     login = null;
+    avatarUrl = null;
+    currentUser = null;
     selectedOwner = null;
     selectedRepo = null;
     tokenStatus = null;
@@ -138,6 +150,17 @@ class AppState extends ChangeNotifier {
   void clearRepositorySelection() {
     selectedOwner = null;
     selectedRepo = null;
+    notifyListeners();
+  }
+
+  Future<void> setCustomBackground(String? path) async {
+    customBackgroundPath = path;
+    final prefs = await SharedPreferences.getInstance();
+    if (path == null || path.isEmpty) {
+      await prefs.remove('custom_background_path');
+    } else {
+      await prefs.setString('custom_background_path', path);
+    }
     notifyListeners();
   }
 

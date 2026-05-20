@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
@@ -165,6 +166,53 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _showHistory(ChatConversationState chat) async {
+    final files = await chat.store.listFiles();
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(ctx).size.height * 0.72,
+        margin: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Theme.of(ctx).brightness == Brightness.dark ? const Color(0xFF0A1C2C) : Colors.white,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('对话历史 / 记忆文件', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 10),
+          Expanded(
+            child: files.isEmpty
+                ? const MxEmpty(icon: Icons.history_rounded, label: '暂无历史对话')
+                : ListView.builder(
+                    itemCount: files.length,
+                    itemBuilder: (_, i) {
+                      final f = File(files[i].path);
+                      final id = f.uri.pathSegments.last.replaceAll('.txt', '');
+                      final stat = f.statSync();
+                      return MxCard(
+                        child: Row(children: [
+                          const Icon(Icons.description_rounded, size: 18),
+                          const SizedBox(width: 10),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(id, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800)),
+                            Text('${stat.modified}', style: const TextStyle(fontSize: 11)),
+                          ])),
+                          MxIconBtn(icon: Icons.open_in_new_rounded, size: 32, onPressed: () { Navigator.pop(ctx); chat.loadHistoryAsContext(id); }),
+                          MxIconBtn(icon: Icons.delete_rounded, size: 32, onPressed: () async { await chat.deleteHistory(id); if (ctx.mounted) Navigator.pop(ctx); }),
+                        ]),
+                      );
+                    },
+                  ),
+          ),
+        ]),
+      ),
+    );
+  }
+
   IconData _stepIcon(AiTaskStepStatus s) {
     switch (s) {
       case AiTaskStepStatus.pending:   return Icons.radio_button_unchecked;
@@ -210,6 +258,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 size: 34,
               ),
               const Spacer(),
+              MxIconBtn(
+                  icon: Icons.add_comment_rounded,
+                  onPressed: chat.newConversation,
+                  tooltip: '新对话',
+                  size: 34),
+              const SizedBox(width: 3),
+              MxIconBtn(
+                  icon: Icons.manage_search_rounded,
+                  onPressed: () => _showHistory(chat),
+                  tooltip: '历史/搜索',
+                  size: 34),
+              const SizedBox(width: 3),
               MxIconBtn(
                   icon: Icons.undo_rounded,
                   onPressed: chat.rollbackLastMessage,

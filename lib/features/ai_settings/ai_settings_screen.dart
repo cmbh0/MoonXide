@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../app/mx_widgets.dart';
 import '../../core/ai/ai_api_mode.dart';
 import '../../core/ai/ai_config_state.dart';
 import '../../core/ai/ai_api_client.dart';
 
 class AiSettingsScreen extends StatefulWidget {
   const AiSettingsScreen({super.key});
-
   @override
   State<AiSettingsScreen> createState() => _AiSettingsScreenState();
 }
@@ -25,15 +25,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
 
   @override
   void dispose() {
-    baseController.dispose();
-    pathController.dispose();
-    keyController.dispose();
-    modelController.dispose();
-    temperatureController.dispose();
-    topPController.dispose();
-    maxTokensController.dispose();
-    systemController.dispose();
-    testController.dispose();
+    for (final c in [baseController, pathController, keyController, modelController, temperatureController, topPController, maxTokensController, systemController, testController]) { c.dispose(); }
     super.dispose();
   }
 
@@ -62,10 +54,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
       maxTokens: maxTokensController.text,
       systemPrompt: systemController.text,
     );
-    next = next.copyWith(
-      baseUrl: state.normalizer.normalizeBaseUrl(next.baseUrl),
-      endpointPath: state.normalizer.normalizePath(next.endpointPath, next.mode),
-    );
+    next = next.copyWith(baseUrl: state.normalizer.normalizeBaseUrl(next.baseUrl), endpointPath: state.normalizer.normalizePath(next.endpointPath, next.mode));
     await state.update(next);
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('AI 接口配置已保存')));
   }
@@ -74,16 +63,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     await _save(state);
     try {
       final body = await AiApiClient().send(state.config, testController.text);
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('测试响应'),
-            content: SingleChildScrollView(child: SelectableText(body)),
-            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
-          ),
-        );
-      }
+      if (mounted) showDialog(context: context, builder: (_) => AlertDialog(title: const Text('测试响应'), content: SingleChildScrollView(child: SelectableText(body)), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))]));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('测试失败：$e')));
     }
@@ -95,73 +75,57 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     _sync(state);
     final actual = state.normalizer.actualUrl(baseUrl: baseController.text, endpointPath: pathController.text, mode: state.config.mode);
     return Scaffold(
-      appBar: AppBar(title: const Text('AI 接口设置')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          DropdownButtonFormField<AiApiMode>(
-            value: state.config.mode,
-            decoration: const InputDecoration(labelText: '接口模式', border: OutlineInputBorder()),
-            items: AiApiMode.values.map((e) => DropdownMenuItem(value: e, child: Text(e.label))).toList(),
-            onChanged: (v) async {
-              if (v == null) return;
-              pathController.text = v.defaultPath;
-              await state.setMode(v);
-            },
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: baseController,
-            decoration: InputDecoration(
-              labelText: '请求地址 / 域名',
-              hintText: 'api.openai.com 或 https://api.openai.com',
-              helperText: actual.isEmpty ? '实际请求地址会显示在这里' : '实际请求地址：$actual',
-              border: const OutlineInputBorder(),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Row(children: [
+              MxIconBtn(icon: Icons.arrow_back_rounded, onPressed: () => Navigator.pop(context)),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('AI 接口设置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+            ]),
+            const MxSectionLabel('接口模式'),
+            MxDropdown<AiApiMode>(
+              value: state.config.mode,
+              hint: '点击选择 API 格式',
+              items: AiApiMode.values.map((e) => MxDropdownItem(value: e, label: e.label, icon: Icons.api_rounded)).toList(),
+              onChanged: (v) async { if (v == null) return; pathController.text = v.defaultPath; await state.setMode(v); },
             ),
-            onChanged: (_) => setState(() {}),
-            onEditingComplete: () {
-              baseController.text = state.normalizer.normalizeBaseUrl(baseController.text);
-              setState(() {});
-            },
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: pathController,
-            decoration: InputDecoration(
-              labelText: 'API 端点',
-              hintText: state.config.mode.defaultPath,
-              helperText: actual.isEmpty ? '可自定义端点；为空时使用当前模式默认端点' : '实际请求地址：$actual',
-              border: const OutlineInputBorder(),
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          TextField(controller: keyController, obscureText: true, decoration: const InputDecoration(labelText: 'API Key', border: OutlineInputBorder())),
-          const SizedBox(height: 12),
-          TextField(controller: modelController, decoration: const InputDecoration(labelText: '模型名', hintText: 'gpt-4o-mini / claude-3-5-sonnet-latest / 自定义模型', border: OutlineInputBorder())),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(child: TextField(controller: temperatureController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'temperature，空则不传', border: OutlineInputBorder()))),
-            const SizedBox(width: 8),
-            Expanded(child: TextField(controller: topPController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'top_p，空则不传', border: OutlineInputBorder()))),
-          ]),
-          const SizedBox(height: 12),
-          TextField(controller: maxTokensController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'max_tokens，空则不传', border: OutlineInputBorder())),
-          const SizedBox(height: 12),
-          TextField(controller: systemController, minLines: 3, maxLines: 6, decoration: const InputDecoration(labelText: '系统提示词，空则不传', border: OutlineInputBorder())),
-          SwitchListTile(
-            value: state.config.stream,
-            onChanged: state.setStream,
-            title: const Text('SSE 流式模式'),
-            subtitle: const Text('开启后请求体传 stream=true；关闭则不传流式参数。'),
-          ),
-          const Divider(),
-          TextField(controller: testController, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: '测试输入', border: OutlineInputBorder())),
-          const SizedBox(height: 12),
-          FilledButton(onPressed: () => _save(state), child: const Text('保存配置')),
-          const SizedBox(height: 8),
-          FilledButton.tonal(onPressed: () => _test(state), child: const Text('保存并测试请求')),
-        ],
+            const SizedBox(height: 12),
+            MxTextField(controller: baseController, hint: '请求地址 / 域名', prefix: const Icon(Icons.link_rounded), onChanged: (_) => setState(() {})),
+            const SizedBox(height: 8),
+            Text(actual.isEmpty ? '实际请求地址会显示在这里' : '实际请求地址：$actual', style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5))),
+            const SizedBox(height: 12),
+            MxTextField(controller: pathController, hint: state.config.mode.defaultPath, prefix: const Icon(Icons.route_rounded), onChanged: (_) => setState(() {})),
+            const MxSectionLabel('模型'),
+            MxTextField(controller: keyController, hint: 'API Key', obscure: true, prefix: const Icon(Icons.key_rounded)),
+            const SizedBox(height: 10),
+            MxTextField(controller: modelController, hint: '模型名，例如 gpt-4o-mini', prefix: const Icon(Icons.memory_rounded)),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: MxTextField(controller: temperatureController, hint: 'temperature', keyboardType: TextInputType.number)),
+              const SizedBox(width: 10),
+              Expanded(child: MxTextField(controller: topPController, hint: 'top_p', keyboardType: TextInputType.number)),
+            ]),
+            const SizedBox(height: 10),
+            MxTextField(controller: maxTokensController, hint: 'max_tokens，空则不传', keyboardType: TextInputType.number),
+            const SizedBox(height: 10),
+            MxTextField(controller: systemController, hint: '系统提示词，空则不传', minLines: 3, maxLines: 6),
+            const MxSectionLabel('流式'),
+            MxCard(child: Row(children: [
+              const Expanded(child: Text('SSE 流式模式', style: TextStyle(fontWeight: FontWeight.w800))),
+              Switch(value: state.config.stream, onChanged: state.setStream),
+            ])),
+            const MxSectionLabel('测试'),
+            MxTextField(controller: testController, hint: '测试输入', minLines: 2, maxLines: 4),
+            const SizedBox(height: 12),
+            MxActionRow(children: [
+              MxButton(label: '保存配置', icon: Icons.save_rounded, onPressed: () => _save(state)),
+              MxButton(label: '保存并测试', icon: Icons.play_arrow_rounded, onPressed: () => _test(state), filled: false),
+            ]),
+          ],
+        ),
       ),
     );
   }

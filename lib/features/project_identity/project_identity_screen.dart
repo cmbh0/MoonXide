@@ -1,12 +1,12 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../../app/mx_widgets.dart';
 import '../../core/models/project_identity_config.dart';
 import '../../core/services/project_identity_patch_service.dart';
 import '../../core/services/project_identity_store.dart';
 
 class ProjectIdentityScreen extends StatefulWidget {
   const ProjectIdentityScreen({super.key});
-
   @override
   State<ProjectIdentityScreen> createState() => _ProjectIdentityScreenState();
 }
@@ -23,10 +23,7 @@ class _ProjectIdentityScreenState extends State<ProjectIdentityScreen> {
   bool loading = true;
 
   @override
-  void initState() {
-    super.initState();
-    _load();
-  }
+  void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
     final config = await store.load();
@@ -39,12 +36,12 @@ class _ProjectIdentityScreenState extends State<ProjectIdentityScreen> {
   }
 
   ProjectIdentityConfig _config() => ProjectIdentityConfig(
-        appName: appName.text.trim(),
-        packageName: packageName.text.trim(),
-        versionName: versionName.text.trim(),
-        versionCode: int.tryParse(versionCode.text.trim()) ?? 1,
-        iconPath: iconPath,
-      );
+    appName: appName.text.trim(),
+    packageName: packageName.text.trim(),
+    versionName: versionName.text.trim(),
+    versionCode: int.tryParse(versionCode.text.trim()) ?? 1,
+    iconPath: iconPath,
+  );
 
   Future<void> _pickIcon() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: false);
@@ -64,48 +61,45 @@ class _ProjectIdentityScreenState extends State<ProjectIdentityScreen> {
 
   @override
   void dispose() {
-    appName.dispose();
-    packageName.dispose();
-    versionName.dispose();
-    versionCode.dispose();
-    super.dispose();
+    appName.dispose(); packageName.dispose(); versionName.dispose(); versionCode.dispose(); super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('项目身份配置')),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                const Text('用于用户项目的 App 名称、包名、版本和图标配置。MoonXide 会在生成/修改项目配置时使用这些值。'),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: SafeArea(
+        child: loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(padding: const EdgeInsets.all(16), children: [
+                Row(children: [
+                  MxIconBtn(icon: Icons.arrow_back_rounded, onPressed: () => Navigator.pop(context)),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('项目身份配置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+                ]),
+                const MxSectionLabel('基础信息'),
+                MxTextField(controller: appName, hint: '软件名称'),
+                const SizedBox(height: 10),
+                MxTextField(controller: packageName, hint: '软件包名，例如 com.example.app'),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Expanded(child: MxTextField(controller: versionName, hint: '版本名 1.0.0')),
+                  const SizedBox(width: 10),
+                  Expanded(child: MxTextField(controller: versionCode, hint: '版本号 1', keyboardType: TextInputType.number)),
+                ]),
+                const MxSectionLabel('图标'),
+                MxCard(child: Row(children: [
+                  Icon(Icons.image_rounded, color: scheme.primary),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(iconPath ?? '未选择，默认使用 Flutter 生成图标', maxLines: 2, overflow: TextOverflow.ellipsis)),
+                  MxButton(label: '选择', onPressed: _pickIcon, small: true, filled: false),
+                ])),
+                if (validation != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(validation!, style: TextStyle(color: scheme.error))),
                 const SizedBox(height: 16),
-                TextField(controller: appName, decoration: const InputDecoration(labelText: '软件名称', border: OutlineInputBorder())),
-                const SizedBox(height: 12),
-                TextField(controller: packageName, decoration: const InputDecoration(labelText: '软件包名', hintText: 'com.example.app', border: OutlineInputBorder())),
-                const SizedBox(height: 12),
-                TextField(controller: versionName, decoration: const InputDecoration(labelText: '软件版本名', hintText: '1.0.0', border: OutlineInputBorder())),
-                const SizedBox(height: 12),
-                TextField(controller: versionCode, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '软件版本号', hintText: '1', border: OutlineInputBorder())),
-                const SizedBox(height: 12),
-                Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.image),
-                    title: const Text('软件图标'),
-                    subtitle: Text(iconPath ?? '未选择，默认使用 Flutter 生成图标'),
-                    trailing: OutlinedButton(onPressed: _pickIcon, child: const Text('选择图片')),
-                  ),
-                ),
-                if (validation != null) Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(validation!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                ),
-                const SizedBox(height: 16),
-                FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: const Text('保存配置')),
-              ],
-            ),
+                MxButton(label: '保存配置', icon: Icons.save_rounded, onPressed: _save),
+              ]),
+      ),
     );
   }
 }

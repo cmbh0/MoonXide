@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/build_center_state.dart';
@@ -19,6 +21,7 @@ class _ReleaseScreenState extends State<ReleaseScreen> {
   final _bodyCtrl  = TextEditingController();
   bool _prerelease = false;
   bool _loading    = false;
+  String? _assetPath;
   List<Map<String, dynamic>> _releases = [];
 
   @override
@@ -34,14 +37,24 @@ class _ReleaseScreenState extends State<ReleaseScreen> {
     final owner = app.selectedOwner;
     final repo  = app.selectedRepo;
     if (owner == null || repo == null || app.github == null) return;
+    if (_assetPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请先上传发行文件，不能创建空发行版')));
+      return;
+    }
     setState(() => _loading = true);
     try {
-      await app.github!.createRelease(
+      final release = await app.github!.createRelease(
         owner: owner, repo: repo,
         tagName: _tagCtrl.text.trim(),
         name: _titleCtrl.text.trim(),
         body: _bodyCtrl.text,
         prerelease: _prerelease,
+      );
+      final f = File(_assetPath!);
+      await app.github!.uploadReleaseAsset(
+        uploadUrl: release['upload_url'] as String,
+        name: f.uri.pathSegments.last,
+        bytes: await f.readAsBytes(),
       );
       await _load(context);
       if (context.mounted) {
@@ -79,6 +92,13 @@ class _ReleaseScreenState extends State<ReleaseScreen> {
       url: build.artifactDownloadUrl!, token: app.token!, fileName: 'moonxide-artifact.zip');
     build.setArtifact(localPath: path, downloadUrl: build.artifactDownloadUrl);
     await AndroidInstaller().openApk(path);
+  }
+
+  Future<void> _pickReleaseAsset() async {
+    final r = await FilePicker.platform.pickFiles(withData: false);
+    final path = r?.files.single.path;
+    if (path == null) return;
+    setState(() => _assetPath = path);
   }
 
   @override
@@ -138,6 +158,16 @@ class _ReleaseScreenState extends State<ReleaseScreen> {
               const SizedBox(height: 10),
               MxTextField(controller: _bodyCtrl,  hint: '本次更新内容…', label: '版本说明', minLines: 3, maxLines: 6,
                   prefix: const Icon(Icons.notes_rounded, size: 18)),
+              const SizedBox(height: 10),
+              MxCard(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(children: [
+                  Icon(Icons.attach_file_rounded, color: scheme.primary, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(_assetPath ?? '必须上传发行文件后才能创建发行版', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+                  MxButton(label: '上传', icon: Icons.upload_file_rounded, onPressed: _pickReleaseAsset, small: true, filled: false),
+                ]),
+              ),
               const SizedBox(height: 10),
               Row(
                 children: [
