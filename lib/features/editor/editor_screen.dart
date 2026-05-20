@@ -179,7 +179,7 @@ class _EmptyEditor extends StatelessWidget {
             color: Color(0xFFFFFBFF),
             child: Padding(
               padding: EdgeInsets.only(top: 3),
-              child: Text('没有内容。请创建或打开项目。修改配置请编辑 webapp。', style: TextStyle(fontFamily: 'monospace', fontSize: 14)),
+              child: Text('打开工作区选择文件，或在此直接编辑。', style: TextStyle(fontFamily: 'monospace', fontSize: 14)),
             ),
           ),
         ),

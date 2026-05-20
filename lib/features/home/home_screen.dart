@@ -1,5 +1,7 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../app/moonxide_theme.dart';
 import '../../core/services/app_state.dart';
 import '../workspace/workspace_screen.dart';
 import '../editor/editor_screen.dart';
@@ -16,61 +18,23 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int index = 1;
+  int _index = 1; // 默认进编辑器
 
-  static const _items = <_MoonNavItem>[
-    _MoonNavItem('工作区', Icons.folder_open_rounded),
-    _MoonNavItem('编辑器', Icons.edit_note_rounded),
-    _MoonNavItem('AI', Icons.auto_awesome_rounded),
-    _MoonNavItem('编译', Icons.play_arrow_rounded),
-    _MoonNavItem('发行', Icons.rocket_launch_rounded),
-    _MoonNavItem('设置', Icons.tune_rounded),
+  static const _tabs = <_Tab>[
+    _Tab('工作区', Icons.folder_open_rounded),
+    _Tab('编辑器', Icons.edit_note_rounded),
+    _Tab('AI', Icons.auto_awesome_rounded),
+    _Tab('编译', Icons.play_arrow_rounded),
+    _Tab('发行', Icons.rocket_launch_rounded),
+    _Tab('设置', Icons.tune_rounded),
   ];
-
-  void _openSwitcher() {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Theme.of(context).colorScheme.surface.withOpacity(0.96),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ListTile(
-                title: Text('MoonXide 功能切换', style: TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('AI 聊天与任务执行已合并在一个入口里'),
-              ),
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  childAspectRatio: 1.25,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                ),
-                itemCount: _items.length,
-                itemBuilder: (_, i) => _SwitcherTile(
-                  item: _items[i],
-                  selected: i == index,
-                  onTap: () {
-                    Navigator.pop(context);
-                    setState(() => index = i);
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+
     final screens = [
       WorkspaceScreen(state: state),
       const EditorScreen(),
@@ -79,89 +43,171 @@ class _HomeScreenState extends State<HomeScreen> {
       const ReleaseScreen(),
       SettingsScreen(state: state),
     ];
-    final item = _items[index];
+
     return Scaffold(
-      appBar: AppBar(
-        toolbarHeight: 54,
-        leading: IconButton(onPressed: _openSwitcher, icon: const Icon(Icons.menu_rounded)),
-        titleSpacing: 0,
-        title: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-        actions: [
-          _TopNavIcon(item: _items[0], selected: index == 0, onTap: () => setState(() => index = 0)),
-          _TopNavIcon(item: _items[1], selected: index == 1, onTap: () => setState(() => index = 1)),
-          _TopNavIcon(item: _items[2], selected: index == 2, onTap: () => setState(() => index = 2)),
-          PopupMenuButton<int>(
-            icon: const Icon(Icons.more_vert_rounded),
-            onSelected: (value) => setState(() => index = value),
-            itemBuilder: (_) => [
-              for (var i = 3; i < _items.length; i++)
-                PopupMenuItem(value: i, child: ListTile(leading: Icon(_items[i].icon), title: Text(_items[i].label))),
+      backgroundColor: isDark ? const Color(0xFF071722) : MoonXideTheme.snow,
+      body: Stack(
+        children: [
+          // 背景光斑
+          Positioned(top: -80, right: -60, child: _Blob(size: 200, color: const Color(0xFF9CD8FF).withOpacity(isDark ? 0.14 : 0.28))),
+          Positioned(bottom: 80, left: -80, child: _Blob(size: 220, color: const Color(0xFFD9F2FF).withOpacity(isDark ? 0.08 : 0.38))),
+          // 主内容
+          Column(
+            children: [
+              // 顶部标题栏
+              _TopBar(
+                tab: _tabs[_index],
+                login: state.login,
+                repo: state.selectedOwner != null && state.selectedRepo != null ? '${state.selectedOwner}/${state.selectedRepo}' : null,
+              ),
+              // 页面内容
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: KeyedSubtree(key: ValueKey(_index), child: screens[_index]),
+                ),
+              ),
+              // 底部导航栏
+              _BottomNav(tabs: _tabs, selected: _index, onSelect: (i) => setState(() => _index = i)),
             ],
           ),
         ],
       ),
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        child: KeyedSubtree(key: ValueKey(index), child: screens[index]),
-      ),
     );
   }
 }
 
-class _MoonNavItem {
-  const _MoonNavItem(this.label, this.icon);
+class _Tab {
+  const _Tab(this.label, this.icon);
   final String label;
   final IconData icon;
 }
 
-class _TopNavIcon extends StatelessWidget {
-  const _TopNavIcon({required this.item, required this.selected, required this.onTap});
-  final _MoonNavItem item;
-  final bool selected;
-  final VoidCallback onTap;
+// ─── 顶部标题栏 ───────────────────────────────────────────────────────────────
+class _TopBar extends StatelessWidget {
+  const _TopBar({required this.tab, required this.login, required this.repo});
+  final _Tab tab;
+  final String? login;
+  final String? repo;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 1),
-      child: IconButton(
-        tooltip: item.label,
-        onPressed: onTap,
-        icon: Icon(item.icon, color: selected ? scheme.primary : scheme.onSurface),
-        style: IconButton.styleFrom(backgroundColor: selected ? scheme.primary.withOpacity(0.12) : null),
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: scheme.primary.withOpacity(0.12),
+              ),
+              child: Icon(Icons.terrain_rounded, color: scheme.primary, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tab.label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                  if (repo != null)
+                    Text(repo!, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.5))),
+                ],
+              ),
+            ),
+            if (login != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text('@$login', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.primary)),
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _SwitcherTile extends StatelessWidget {
-  const _SwitcherTile({required this.item, required this.selected, required this.onTap});
-  final _MoonNavItem item;
-  final bool selected;
-  final VoidCallback onTap;
+// ─── 底部导航栏 ───────────────────────────────────────────────────────────────
+class _BottomNav extends StatelessWidget {
+  const _BottomNav({required this.tabs, required this.selected, required this.onSelect});
+  final List<_Tab> tabs;
+  final int selected;
+  final ValueChanged<int> onSelect;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: onTap,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: selected ? scheme.primary.withOpacity(0.14) : scheme.surfaceContainerHighest.withOpacity(0.55),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: selected ? scheme.primary.withOpacity(0.4) : scheme.outlineVariant.withOpacity(0.35)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(item.icon, color: selected ? scheme.primary : scheme.onSurface),
-            const SizedBox(height: 8),
-            Text(item.label, style: const TextStyle(fontWeight: FontWeight.w700)),
-          ],
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SafeArea(
+      top: false,
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            height: 62,
+            decoration: BoxDecoration(
+              color: (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.78),
+              border: Border(top: BorderSide(color: scheme.outlineVariant.withOpacity(0.25))),
+            ),
+            child: Row(
+              children: List.generate(tabs.length, (i) {
+                final active = i == selected;
+                return Expanded(
+                  child: InkWell(
+                    onTap: () => onSelect(i),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: active ? scheme.primary.withOpacity(0.14) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Icon(tabs[i].icon, size: 22, color: active ? scheme.primary : scheme.onSurface.withOpacity(0.5)),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          tabs[i].label,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                            color: active ? scheme.primary : scheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
         ),
       ),
+    );
+  }
+}
+
+// ─── 背景光斑 ─────────────────────────────────────────────────────────────────
+class _Blob extends StatelessWidget {
+  const _Blob({required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ImageFiltered(
+      imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+      child: Container(width: size, height: size, decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
     );
   }
 }
