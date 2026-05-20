@@ -214,7 +214,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final sw     = mq.size.width;
     final topPad = mq.padding.top; // 状态栏高度
 
-    final leftW  = sw * 0.72;
+    final leftW  = sw * 0.56;
     final rightW = sw * 0.78;
 
     // 工具栏总高 = 状态栏 + 固定高度

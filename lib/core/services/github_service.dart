@@ -82,21 +82,23 @@ class GithubService {
     }));
   }
 
+  String _contentPath(String path) => path.split('/').map(Uri.encodeComponent).join('/');
+
   Future<List<Map<String, dynamic>>> getContents(String owner, String repo, {String path = ''}) async {
-    final safePath = path.isEmpty ? '' : '/$path';
+    final safePath = path.isEmpty ? '' : '/${_contentPath(path)}';
     final data = await _request('GET', '/repos/$owner/$repo/contents$safePath');
     if (data is List) return List<Map<String, dynamic>>.from(data);
     return [Map<String, dynamic>.from(data as Map)];
   }
 
-  Future<Map<String, dynamic>> getFile(String owner, String repo, String path) async => Map<String, dynamic>.from(await _request('GET', '/repos/$owner/$repo/contents/$path'));
+  Future<Map<String, dynamic>> getFile(String owner, String repo, String path) async => Map<String, dynamic>.from(await _request('GET', '/repos/$owner/$repo/contents/${_contentPath(path)}'));
 
   Future<void> putFile({required String owner, required String repo, required String path, required String message, required String contentBase64, String? sha}) async {
-    await _request('PUT', '/repos/$owner/$repo/contents/$path', body: {'message': message, 'content': contentBase64, if (sha != null) 'sha': sha});
+    await _request('PUT', '/repos/$owner/$repo/contents/${_contentPath(path)}', body: {'message': message, 'content': contentBase64, if (sha != null) 'sha': sha});
   }
 
   Future<void> deleteFile({required String owner, required String repo, required String path, required String message, required String sha}) async {
-    await _request('DELETE', '/repos/$owner/$repo/contents/$path', body: {'message': message, 'sha': sha});
+    await _request('DELETE', '/repos/$owner/$repo/contents/${_contentPath(path)}', body: {'message': message, 'sha': sha});
   }
 
   Future<void> dispatchWorkflow({required String owner, required String repo, required String workflowFile, String ref = 'main', required Map<String, dynamic> inputs}) async {

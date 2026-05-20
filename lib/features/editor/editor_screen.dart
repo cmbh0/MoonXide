@@ -111,7 +111,6 @@ class EditorScreenState extends State<EditorScreen> {
     contentController.stringColor = isDark ? const Color(0xFFC3E88D) : const Color(0xFF22863A);
     contentController.commentColor = isDark ? const Color(0xFF637777) : const Color(0xFF6A737D);
     final diagnostics = editor.diagnostics;
-    final dividerColor= isDark ? const Color(0xFF1A3448) : const Color(0xFFD8E8F0);
 
     return Column(
       children: [
@@ -150,7 +149,7 @@ class EditorScreenState extends State<EditorScreen> {
             children: [
               // 行号栏
               Container(
-                width: 52,
+                width: 34,
                 color: gutterBg,
                 child: ListView.builder(
                   padding: EdgeInsets.zero,
@@ -160,7 +159,7 @@ class EditorScreenState extends State<EditorScreen> {
                     child: Align(
                       alignment: Alignment.centerRight,
                       child: Padding(
-                        padding: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.only(right: 4),
                         child: Text('${i + 1}',
                             style: TextStyle(
                                 fontFamily: 'monospace',
@@ -171,8 +170,7 @@ class EditorScreenState extends State<EditorScreen> {
                   ),
                 ),
               ),
-              // 分割线
-              Container(width: 1, color: dividerColor),
+              
               // 代码区
               Expanded(
                 child: TextField(

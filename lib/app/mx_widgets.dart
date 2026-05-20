@@ -77,7 +77,7 @@ class MxCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final base   = color ?? (isDark ? const Color(0xFF0F2230) : Colors.white);
-    return Padding(
+    final card = Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Material(
         color: base.withOpacity(isDark ? 0.82 : 0.90),
@@ -101,6 +101,7 @@ class MxCard extends StatelessWidget {
         ),
       ),
     );
+    return onTap == null ? card : _MxPressable(child: card);
   }
 }
 
@@ -194,7 +195,8 @@ class MxButton extends StatelessWidget {
     final scheme   = Theme.of(context).colorScheme;
     final c        = color ?? scheme.primary;
     final disabled = onPressed == null;
-    return Material(
+    return _MxPressable(
+      child: Material(
       color: filled
           ? c.withOpacity(disabled ? 0.30 : 1.0)
           : c.withOpacity(0.08),
@@ -229,7 +231,7 @@ class MxButton extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 }
 
@@ -436,7 +438,8 @@ class MxIconBtn extends StatelessWidget {
         ),
       ),
     );
-    return tooltip != null ? Tooltip(message: tooltip!, child: w) : w;
+    final animated = onPressed == null ? w : _MxPressable(child: w);
+    return tooltip != null ? Tooltip(message: tooltip!, child: animated) : animated;
   }
 }
 
@@ -476,6 +479,31 @@ class MxProgressBanner extends StatelessWidget {
               child: Text(label,
                   style: const TextStyle(fontWeight: FontWeight.w600))),
         ],
+      ),
+    );
+  }
+}
+
+class _MxPressable extends StatefulWidget {
+  const _MxPressable({required this.child});
+  final Widget child;
+  @override
+  State<_MxPressable> createState() => _MxPressableState();
+}
+
+class _MxPressableState extends State<_MxPressable> {
+  bool down = false;
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => setState(() => down = true),
+      onPointerUp: (_) => setState(() => down = false),
+      onPointerCancel: (_) => setState(() => down = false),
+      child: AnimatedScale(
+        scale: down ? 0.96 : 1.0,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOutBack,
+        child: widget.child,
       ),
     );
   }
