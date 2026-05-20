@@ -15,8 +15,7 @@ class _EditorScreenState extends State<EditorScreen> {
   final contentController = TextEditingController();
   final searchController = TextEditingController();
   final replaceController = TextEditingController();
-  int page = 0;
-  static const int pageLines = 300;
+  bool showFind = false;
 
   @override
   void dispose() {
@@ -30,14 +29,6 @@ class _EditorScreenState extends State<EditorScreen> {
     if (contentController.text != state.currentContent) {
       contentController.text = state.currentContent;
     }
-  }
-
-  List<String> _pageLines(String content) {
-    final lines = content.split('\n');
-    final start = page * pageLines;
-    final end = (start + pageLines).clamp(0, lines.length);
-    if (start >= lines.length) return [];
-    return lines.sublist(start, end);
   }
 
   Future<void> _save(BuildContext context, EditorState editor, AppState app) async {
@@ -66,8 +57,19 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   void _replace(EditorState editor) {
+    if (searchController.text.isEmpty) return;
     final next = contentController.text.replaceAll(searchController.text, replaceController.text);
     contentController.text = next;
+    editor.updateContent(next);
+  }
+
+  void _insert(String text, EditorState editor) {
+    final value = contentController.value;
+    final selection = value.selection;
+    final start = selection.isValid ? selection.start : value.text.length;
+    final end = selection.isValid ? selection.end : value.text.length;
+    final next = value.text.replaceRange(start, end, text);
+    contentController.value = TextEditingValue(text: next, selection: TextSelection.collapsed(offset: start + text.length));
     editor.updateContent(next);
   }
 
@@ -76,54 +78,138 @@ class _EditorScreenState extends State<EditorScreen> {
     final editor = context.watch<EditorState>();
     final app = context.watch<AppState>();
     _sync(editor);
-    final previewLines = _pageLines(contentController.text);
+    final lineCount = contentController.text.isEmpty ? 1 : contentController.text.split('\n').length;
     return Scaffold(
       appBar: AppBar(
-        title: Text(editor.currentPath.isEmpty ? '代码编辑器' : editor.currentPath),
+        toolbarHeight: 50,
+        titleSpacing: 0,
+        title: Text(editor.currentPath.isEmpty ? '没有文件' : editor.currentPath, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          IconButton(onPressed: () => _save(context, editor, app), icon: const Icon(Icons.save)),
+          IconButton(tooltip: '撤销', onPressed: () {}, icon: const Icon(Icons.undo_rounded)),
+          IconButton(tooltip: '重做', onPressed: () {}, icon: const Icon(Icons.redo_rounded)),
+          IconButton(tooltip: '保存', onPressed: () => _save(context, editor, app), icon: const Icon(Icons.save_rounded)),
+          IconButton(tooltip: '查找替换', onPressed: () => setState(() => showFind = !showFind), icon: const Icon(Icons.search_rounded)),
+          IconButton(tooltip: '运行/编译', onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请到编译页执行云编译'))), icon: const Icon(Icons.play_arrow_rounded)),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'format') ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('格式化将接入项目工具链')));
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'format', child: Text('格式化代码')),
+              PopupMenuItem(value: 'readonly', child: Text('只读/编辑模式')),
+            ],
+          ),
         ],
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                Expanded(child: TextField(controller: searchController, decoration: const InputDecoration(labelText: '搜索', border: OutlineInputBorder()))),
-                const SizedBox(width: 8),
-                Expanded(child: TextField(controller: replaceController, decoration: const InputDecoration(labelText: '替换为', border: OutlineInputBorder()))),
-                IconButton(onPressed: () => _replace(editor), icon: const Icon(Icons.find_replace)),
-              ],
-            ),
-          ),
-          if (contentController.text.split('\n').length > pageLines)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                TextButton(onPressed: page > 0 ? () => setState(() => page--) : null, child: const Text('上一页')),
-                Text('第 ${page + 1} 页，每页 $pageLines 行'),
-                TextButton(onPressed: () => setState(() => page++), child: const Text('下一页')),
-              ],
+          if (showFind)
+            Container(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.45),
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+              child: Row(
+                children: [
+                  Expanded(child: TextField(controller: searchController, decoration: const InputDecoration(isDense: true, hintText: '搜索'))),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(controller: replaceController, decoration: const InputDecoration(isDense: true, hintText: '替换为'))),
+                  IconButton(onPressed: () => _replace(editor), icon: const Icon(Icons.find_replace_rounded)),
+                ],
+              ),
             ),
           Expanded(
             child: editor.currentPath.isEmpty
-                ? const Center(child: Text('请先在工作区选择并打开文件'))
-                : TextField(
-                    controller: contentController,
-                    expands: true,
-                    maxLines: null,
-                    minLines: null,
-                    keyboardType: TextInputType.multiline,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                    decoration: InputDecoration(
-                      border: const OutlineInputBorder(),
-                      helperText: '预览分页 ${previewLines.length} 行；编辑区保存完整内容。',
-                    ),
-                    onChanged: editor.updateContent,
+                ? const _EmptyEditor()
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 54,
+                        color: const Color(0xFFEDEEEF),
+                        child: ListView.builder(
+                          itemCount: lineCount,
+                          itemBuilder: (_, i) => Container(
+                            height: 22,
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.only(right: 8),
+                            color: i == 0 ? const Color(0xFFE1E1E1) : null,
+                            child: Text('${i + 1}', style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: Color(0xFF555555))),
+                          ),
+                        ),
+                      ),
+                      Container(width: 1, color: const Color(0xFFE1DDE8)),
+                      Expanded(
+                        child: TextField(
+                          controller: contentController,
+                          expands: true,
+                          maxLines: null,
+                          minLines: null,
+                          keyboardType: TextInputType.multiline,
+                          textAlignVertical: TextAlignVertical.top,
+                          style: const TextStyle(fontFamily: 'monospace', fontSize: 14, height: 1.55, color: Color(0xFF202124)),
+                          decoration: const InputDecoration(
+                            filled: true,
+                            fillColor: Color(0xFFFFFBFF),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.fromLTRB(0, 2, 12, 12),
+                          ),
+                          onChanged: editor.updateContent,
+                        ),
+                      ),
+                    ],
                   ),
           ),
+          _SymbolBar(onInsert: (text) => _insert(text, editor)),
         ],
+      ),
+    );
+  }
+}
+
+class _EmptyEditor extends StatelessWidget {
+  const _EmptyEditor();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(width: 54, color: const Color(0xFFEDEEEF), alignment: Alignment.topRight, padding: const EdgeInsets.only(top: 4, right: 8), child: const Text('1')),
+        Container(width: 1, color: const Color(0xFFE1DDE8)),
+        const Expanded(
+          child: ColoredBox(
+            color: Color(0xFFFFFBFF),
+            child: Padding(
+              padding: EdgeInsets.only(top: 3),
+              child: Text('没有内容。请创建或打开项目。修改配置请编辑 webapp。', style: TextStyle(fontFamily: 'monospace', fontSize: 14)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SymbolBar extends StatelessWidget {
+  const _SymbolBar({required this.onInsert});
+  final ValueChanged<String> onInsert;
+
+  @override
+  Widget build(BuildContext context) {
+    const symbols = ['web', 'fun', 'win', '<', '>', '{', '}', '[', ']', '(', ')', ';'];
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: 46,
+        color: const Color(0xFFF1F3F4),
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          itemBuilder: (_, i) => TextButton(
+            onPressed: () => onInsert(symbols[i]),
+            child: Text(symbols[i], style: const TextStyle(fontSize: 18, color: Color(0xFF202124))),
+          ),
+          separatorBuilder: (_, __) => const SizedBox(width: 2),
+          itemCount: symbols.length,
+        ),
       ),
     );
   }
