@@ -295,7 +295,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       MxTextField(controller: _descCtrl, hint: '描述（可选）', prefix: const Icon(Icons.notes_rounded, size: 17)),
       const SizedBox(height: 10),
       StatefulBuilder(builder: (ctx, setSt) => Column(children: [
-        _SwitchRow(label: '私有仓库', value: _private, onChanged: (v) => setSt(() => _private = v)),
+_SwitchRow(label: '私有仓库', value: _private, onChanged: (v) => setSt(() => _private = v)),
         _SwitchRow(label: '初始化 README', value: _autoInit, onChanged: (v) => setSt(() => _autoInit = v)),
       ])),
       const SizedBox(height: 12),
@@ -330,18 +330,13 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<bool> _confirmDelete(String repo) async {
-    final res = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认删除仓库？'),
-        content: Text('将永久删除 $repo。此操作不可恢复。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('删除')),
-        ],
-      ),
+    return MxDialog.show(context,
+      title: '确认删除仓库？',
+      content: '将永久删除 $repo，此操作不可恢复。',
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      confirmColor: Colors.red,
     );
-    return res == true;
   }
 
   void _showSheet({required String title, required List<Widget> children}) {
@@ -500,8 +495,8 @@ class _SwitchRow extends StatelessWidget {
   final ValueChanged<bool> onChanged;
   @override
   Widget build(BuildContext context) => Row(children: [
-    Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
-    Switch(value: value, onChanged: onChanged),
+    Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+    MxSwitch(value: value, onChanged: onChanged),
   ]);
 }
 

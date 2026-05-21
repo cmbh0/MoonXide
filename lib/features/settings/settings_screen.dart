@@ -111,7 +111,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
         const MxSectionLabel('自动化'),
         const MxCard(
-          child: Text('依赖管理、权限申请、Manifest 修改等快捷按钮已移除，后续由 AI 任务执行统一完成，避免页面臃肿。'),
+          child: Text('依赖管理、权限申请、Manifest 修改等操作由 AI 任务统一执行。'),
         ),
       ],
     );

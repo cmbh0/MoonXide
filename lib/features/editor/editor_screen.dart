@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 import '../../core/services/editor_state.dart';
-
 class EditorScreen extends StatefulWidget {
   const EditorScreen({super.key});
 
@@ -16,6 +15,7 @@ class EditorScreenState extends State<EditorScreen> {
   final contentController = _CodeController();
   final searchController  = TextEditingController();
   final replaceController = TextEditingController();
+  final _editorScroll     = ScrollController();
   bool showFind = false;
 
   @override
@@ -23,6 +23,7 @@ class EditorScreenState extends State<EditorScreen> {
     contentController.dispose();
     searchController.dispose();
     replaceController.dispose();
+    _editorScroll.dispose();
     super.dispose();
   }
 
@@ -94,6 +95,8 @@ class EditorScreenState extends State<EditorScreen> {
   @override
   Widget build(BuildContext context) {
     final editor = context.watch<EditorState>();
+    final appState = context.watch<AppState>();
+    final hasBg = appState.customBackgroundPath != null;
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     _sync(editor);
@@ -101,9 +104,11 @@ class EditorScreenState extends State<EditorScreen> {
         ? 1
         : contentController.text.split('\n').length;
 
-    final gutterBg    = isDark ? const Color(0xFF0D1F2D) : const Color(0xFFEFF4F8);
+    final editorBg    = (isDark ? const Color(0xFF0A1929) : const Color(0xFFFAFDFF))
+        .withOpacity(hasBg ? 0.78 : 1.0);
+    final gutterBg    = (isDark ? const Color(0xFF0D1F2D) : const Color(0xFFEFF4F8))
+        .withOpacity(hasBg ? 0.78 : 1.0);
     final gutterText  = isDark ? const Color(0xFF4A6A80) : const Color(0xFF8A9BAA);
-    final editorBg    = isDark ? const Color(0xFF0A1929) : const Color(0xFFFAFDFF);
     final editorText  = isDark ? const Color(0xFFD4E8F5) : const Color(0xFF1A2B38);
     contentController.baseStyle = TextStyle(
         fontFamily: 'monospace', fontSize: 13, height: 1.55, color: editorText);
@@ -174,9 +179,10 @@ class EditorScreenState extends State<EditorScreen> {
               
               // 代码区
               Expanded(
-                child: TextField(
-                  controller: contentController,
-                  readOnly: editor.readOnly,
+child: TextField(
+                   controller: contentController,
+                   readOnly: editor.readOnly,
+                   scrollController: _editorScroll,
                   expands: true,
                   maxLines: null,
                   minLines: null,
@@ -202,7 +208,11 @@ class EditorScreenState extends State<EditorScreen> {
               Container(
                 width: 42,
                 color: editorBg.withOpacity(0.82),
-                child: _MiniMap(text: contentController.text, color: editorText),
+                child: _MiniMap(
+                  text: contentController.text,
+                  color: editorText,
+                  editorScroll: _editorScroll,
+                ),
               ),
             ],
           ),
@@ -328,30 +338,76 @@ class _CodeController extends TextEditingController {
   }
 }
 
-class _MiniMap extends StatelessWidget {
-  const _MiniMap({required this.text, required this.color});
+class _MiniMap extends StatefulWidget {
+  const _MiniMap({required this.text, required this.color, required this.editorScroll});
   final String text;
   final Color color;
+  final ScrollController editorScroll;
+
+  @override
+  State<_MiniMap> createState() => _MiniMapState();
+}
+
+class _MiniMapState extends State<_MiniMap> {
+  final ScrollController _mapScroll = ScrollController();
+  bool _dragging = false;
+
+  @override
+  void dispose() {
+    _mapScroll.dispose();
+    super.dispose();
+  }
+
+  // 把 minimap 内的 y 偏移映射到编辑器 ScrollController
+  void _seekEditor(double localY, double mapHeight) {
+    if (!widget.editorScroll.hasClients) return;
+    final ratio = (localY / mapHeight).clamp(0.0, 1.0);
+    final target = widget.editorScroll.position.maxScrollExtent * ratio;
+    widget.editorScroll.jumpTo(target);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final lines = text.split('\n').take(180).toList();
-    return IgnorePointer(
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        itemCount: lines.length,
-        itemBuilder: (_, i) {
-          final w = (lines[i].trimRight().length.clamp(4, 60) as num).toDouble() / 60.0;
-          return Align(
-            alignment: Alignment.centerLeft,
-            child: Container(
-              margin: const EdgeInsets.symmetric(vertical: 1),
-              width: 32 * w,
-              height: 2,
-              decoration: BoxDecoration(color: color.withOpacity(0.24), borderRadius: BorderRadius.circular(2)),
-            ),
-          );
-        },
+    final lines = widget.text.split('\n');
+    final lineH = 3.0;
+    final totalH = lines.length * (lineH + 1.0);
+
+    return GestureDetector(
+      onLongPressStart: (d) {
+        setState(() => _dragging = true);
+        _seekEditor(d.localPosition.dy, context.size?.height ?? 1);
+      },
+      onLongPressMoveUpdate: (d) {
+        _seekEditor(d.localPosition.dy, context.size?.height ?? 1);
+      },
+      onLongPressEnd: (_) => setState(() => _dragging = false),
+      onTapDown: (d) => _seekEditor(d.localPosition.dy, context.size?.height ?? 1),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        decoration: BoxDecoration(
+          border: _dragging
+              ? Border(left: BorderSide(color: widget.color.withOpacity(0.35), width: 1))
+              : null,
+        ),
+        child: ListView.builder(
+          controller: _mapScroll,
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: lines.length,
+          itemBuilder: (_, i) {
+            final len = lines[i].trimRight().length;
+            final w = (len.clamp(0, 60) as num).toDouble() / 60.0;
+            return Container(
+              margin: const EdgeInsets.symmetric(vertical: 0.5),
+              width: 34 * w,
+              height: lineH,
+              decoration: BoxDecoration(
+                color: widget.color.withOpacity(len == 0 ? 0.0 : 0.20),
+                borderRadius: BorderRadius.circular(1),
+              ),
+            );
+          },
+        ),
       ),
     );
   }

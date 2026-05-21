@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 import '../../app/mx_widgets.dart';
+import '../../core/ai/ai_api_client.dart';
 import '../../core/ai/ai_config_state.dart';
 import '../../core/chat/chat_conversation_state.dart';
 import '../../core/chat/chat_message_record.dart';
@@ -40,7 +43,51 @@ class _ChatScreenState extends State<ChatScreen> {
     workflow.createTask(text);
     workflow.startAutoRun();
     await chat.sendUserText(text, aiConfig);
-    await chat.addToolResult(chat.snapshot().asPromptAttachment());
+    _scrollToBottom();
+
+    // 真实 AI 调用
+    try {
+      final cfg = aiConfig.config;
+      if (cfg.baseUrl.trim().isEmpty || cfg.apiKey.trim().isEmpty) {
+        chat.appendAssistantDelta('⚠️ 请先在设置中配置 AI 接口地址和 API Key。');
+      } else {
+        final history = chat.messages
+            .where((m) => !m.taskOpen)
+            .map((m) => {'role': m.role == ChatRole.user ? 'user' : 'assistant', 'content': m.content})
+            .toList();
+        final rawBody = await AiApiClient().sendWithHistory(cfg, history, text);
+        // 解析响应
+        String reply = '';
+        if (cfg.stream) {
+          // SSE 流式：逐行解析 data: {...}
+          for (final line in rawBody.split('\n')) {
+            final l = line.trim();
+            if (!l.startsWith('data:')) continue;
+            final data = l.substring(5).trim();
+            if (data == '[DONE]') break;
+            try {
+              final j = jsonDecode(data) as Map;
+              final delta = (j['choices'] as List?)?.first['delta']?['content'] as String? ?? '';
+              if (delta.isNotEmpty) {
+                reply += delta;
+                chat.appendAssistantDelta(delta);
+                _scrollToBottom();
+              }
+            } catch (_) {}
+          }
+        } else {
+          // 非流式：一次性解析
+          final j = jsonDecode(rawBody) as Map;
+          reply = (j['choices'] as List?)?.first['message']?['content'] as String?
+              ?? (j['content'] as List?)?.first['text'] as String?
+              ?? rawBody;
+          chat.appendAssistantDelta(reply);
+        }
+      }
+    } catch (e) {
+      chat.appendAssistantDelta('\n\n❌ 请求失败：$e');
+    }
+
     await chat.finishAssistantTask(aiConfig);
     _scrollToBottom();
   }
@@ -132,9 +179,9 @@ class _ChatScreenState extends State<ChatScreen> {
               color: scheme.primary,
               onTap: () {
                 Navigator.pop(context);
-                // 复制到剪贴板（需要 services 包，此处用 SnackBar 提示）
+                Clipboard.setData(ClipboardData(text: msg.content));
                 ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('已复制')));
+                    const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)));
               },
             ),
           ],
@@ -145,25 +192,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _confirmRollback(
       BuildContext context, ChatMessageRecord msg, ChatConversationState chat) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('确认回滚'),
-        content: const Text('将删除此消息之后的所有对话记录，此操作不可撤销。'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消')),
-          TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                chat.rollbackToMessage(msg.id);
-              },
-              child: const Text('确认回滚',
-                  style: TextStyle(color: Colors.orange))),
-        ],
-      ),
-    );
+    MxDialog.show(context,
+      title: '确认回滚',
+      content: '将删除此消息之后的所有对话记录，此操作不可撤销。',
+      confirmLabel: '确认回滚',
+      cancelLabel: '取消',
+      confirmColor: Colors.orange,
+    ).then((ok) { if (ok) chat.rollbackToMessage(msg.id); });
   }
 
   Future<void> _showHistory(ChatConversationState chat) async {
@@ -443,8 +478,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// ─── 消息气泡 ─────────────────────────────────────────────────────────────────
-class _Bubble extends StatelessWidget {
+// ─── 消息气泡（带入场动画） ───────────────────────────────────────────────────
+class _Bubble extends StatefulWidget {
   const _Bubble({
     required this.message,
     required this.isUser,
@@ -460,60 +495,91 @@ class _Bubble extends StatelessWidget {
   final VoidCallback? onLongPress;
 
   @override
+  State<_Bubble> createState() => _BubbleState();
+}
+
+class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
+  late final AnimationController _ac;
+  late final Animation<double> _fade;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 220));
+    _fade = CurvedAnimation(parent: _ac, curve: Curves.easeOut);
+    _slide = Tween<Offset>(
+      begin: Offset(widget.isUser ? 0.12 : -0.12, 0.04),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ac, curve: Curves.easeOutCubic));
+    _ac.forward();
+  }
+
+  @override
+  void dispose() {
+    _ac.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: GestureDetector(
-        onLongPress: onLongPress,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-          decoration: BoxDecoration(
-            color: isUser
-                ? scheme.primary.withOpacity(0.90)
-                : (isDark
-                    ? const Color(0xFF0F2230)
-                    : Colors.white)
-                    .withOpacity(isDark ? 0.88 : 0.92),
-            borderRadius: BorderRadius.only(
-              topLeft:     const Radius.circular(16),
-              topRight:    const Radius.circular(16),
-              bottomLeft:  Radius.circular(isUser ? 16 : 4),
-              bottomRight: Radius.circular(isUser ? 4 : 16),
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(
+        position: _slide,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: GestureDetector(
+            onLongPress: widget.onLongPress,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+              decoration: BoxDecoration(
+                color: widget.isUser
+                    ? widget.scheme.primary.withOpacity(0.90)
+                    : (widget.isDark ? const Color(0xFF0F2230) : Colors.white)
+                        .withOpacity(widget.isDark ? 0.88 : 0.92),
+                borderRadius: BorderRadius.only(
+                  topLeft:     const Radius.circular(16),
+                  topRight:    const Radius.circular(16),
+                  bottomLeft:  Radius.circular(widget.isUser ? 16 : 4),
+                  bottomRight: Radius.circular(widget.isUser ? 4 : 16),
+                ),
+                border: widget.isUser
+                    ? null
+                    : Border.all(
+                        color: widget.isDark
+                            ? Colors.white.withOpacity(0.07)
+                            : Colors.black.withOpacity(0.05)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!widget.isUser && widget.message.provider.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        '${widget.message.provider}'
+                        '${widget.message.modelId.isEmpty ? '' : ' · ${widget.message.modelId}'}',
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: widget.scheme.primary.withOpacity(0.65)),
+                      ),
+                    ),
+                  if (widget.isUser)
+                    SelectableText(
+                      widget.message.content.isEmpty ? '…' : widget.message.content,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                    )
+                  else
+                    MarkdownBody(
+                      data: widget.message.content.isEmpty ? '…' : widget.message.content,
+                      selectable: true,
+                      softLineBreak: true,
+                    ),
+                ],
+              ),
             ),
-            border: isUser
-                ? null
-                : Border.all(
-                    color: isDark
-                        ? Colors.white.withOpacity(0.07)
-                        : Colors.black.withOpacity(0.05)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (!isUser && message.provider.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '${message.provider}'
-                    '${message.modelId.isEmpty ? '' : ' · ${message.modelId}'}',
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: scheme.primary.withOpacity(0.65)),
-                  ),
-                ),
-              if (isUser)
-                SelectableText(
-                  message.content.isEmpty ? '…' : message.content,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                )
-              else
-                MarkdownBody(
-                  data: message.content.isEmpty ? '…' : message.content,
-                  selectable: true,
-                  softLineBreak: true,
-                ),
-            ],
           ),
         ),
       ),

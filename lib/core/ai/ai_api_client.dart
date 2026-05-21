@@ -6,6 +6,10 @@ import 'ai_provider_config.dart';
 
 class AiRequestBuilder {
   Map<String, dynamic> buildBody(AiProviderConfig config, String userText) {
+    return buildBodyWithHistory(config, [], userText);
+  }
+
+  Map<String, dynamic> buildBodyWithHistory(AiProviderConfig config, List<Map<String, dynamic>> history, String userText) {
     final body = <String, dynamic>{};
     if (config.model.trim().isNotEmpty) body['model'] = config.model.trim();
     if (config.temperature.trim().isNotEmpty) body['temperature'] = double.tryParse(config.temperature.trim()) ?? config.temperature.trim();
@@ -17,6 +21,7 @@ class AiRequestBuilder {
       case AiApiMode.openAiChatCompletions:
         body['messages'] = [
           if (config.systemPrompt.trim().isNotEmpty) {'role': 'system', 'content': config.systemPrompt.trim()},
+          ...history,
           {'role': 'user', 'content': userText},
         ];
         break;
@@ -27,6 +32,7 @@ class AiRequestBuilder {
       case AiApiMode.anthropicMessages:
         if (config.systemPrompt.trim().isNotEmpty) body['system'] = config.systemPrompt.trim();
         body['messages'] = [
+          ...history,
           {'role': 'user', 'content': userText},
         ];
         break;
@@ -46,6 +52,10 @@ class AiApiClient {
         builder = builder ?? AiRequestBuilder();
 
   Future<String> send(AiProviderConfig config, String text) async {
+    return sendWithHistory(config, [], text);
+  }
+
+  Future<String> sendWithHistory(AiProviderConfig config, List<Map<String, dynamic>> history, String text) async {
     final url = normalizer.actualUrl(baseUrl: config.baseUrl, endpointPath: config.endpointPath, mode: config.mode);
     final headers = <String, String>{'Content-Type': 'application/json'};
     if (config.apiKey.trim().isNotEmpty) headers['Authorization'] = 'Bearer ${config.apiKey.trim()}';
@@ -53,7 +63,8 @@ class AiApiClient {
       headers['anthropic-version'] = '2023-06-01';
       if (config.apiKey.trim().isNotEmpty) headers['x-api-key'] = config.apiKey.trim();
     }
-    final response = await client.post(Uri.parse(url), headers: headers, body: jsonEncode(builder.buildBody(config, text)));
+    final body = builder.buildBodyWithHistory(config, history, text);
+    final response = await client.post(Uri.parse(url), headers: headers, body: jsonEncode(body));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('AI 请求失败 ${response.statusCode}: ${response.body}');
     }

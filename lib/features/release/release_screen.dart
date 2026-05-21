@@ -172,7 +172,7 @@ class _ReleaseScreenState extends State<ReleaseScreen> {
               Row(
                 children: [
                   const Expanded(child: Text('预发布版本', style: TextStyle(fontWeight: FontWeight.w600))),
-                  Switch(value: _prerelease, onChanged: (v) => setState(() => _prerelease = v)),
+                  MxSwitch(value: _prerelease, onChanged: (v) => setState(() => _prerelease = v)),
                 ],
               ),
               const SizedBox(height: 8),

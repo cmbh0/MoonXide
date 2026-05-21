@@ -142,8 +142,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     required Widget child,
     required double width,
     required bool isDark,
+    bool hasBg = false,
   }) {
-    final bg     = isDark ? const Color(0xFF0A1C2C) : const Color(0xFFF4FAFF);
+    final bg     = (isDark ? const Color(0xFF0A1C2C) : const Color(0xFFF4FAFF))
+        .withOpacity(hasBg ? 0.82 : 1.0);
     final border = isDark
         ? Colors.white.withOpacity(0.08)
         : Colors.black.withOpacity(0.07);
@@ -298,6 +300,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 onClose: _closeLeft,
                 width: leftW,
                 isDark: isDark,
+                hasBg: state.customBackgroundPath != null,
                 child: WorkspaceScreen(state: state),
               ),
             ),
@@ -327,6 +330,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 onClose: _closeRight,
                 width: rightW,
                 isDark: isDark,
+                hasBg: state.customBackgroundPath != null,
                 child: _buildRightContent(state),
               ),
             ),

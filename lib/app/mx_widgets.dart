@@ -483,6 +483,117 @@ class MxProgressBanner extends StatelessWidget {
   }
 }
 
+// ─── 自定义开关 ───────────────────────────────────────────────────────────────
+class MxSwitch extends StatelessWidget {
+  const MxSwitch({super.key, required this.value, required this.onChanged});
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutBack,
+        width: 44,
+        height: 26,
+        decoration: BoxDecoration(
+          color: value ? scheme.primary : scheme.onSurface.withOpacity(0.18),
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: AnimatedAlign(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutBack,
+          alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            width: 20,
+            height: 20,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle,
+              boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 1))]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 自定义对话框 ─────────────────────────────────────────────────────────────
+class MxDialog extends StatelessWidget {
+  const MxDialog({
+    super.key,
+    required this.title,
+    required this.content,
+    this.confirmLabel = '确认',
+    this.cancelLabel = '取消',
+    this.confirmColor,
+    this.onConfirm,
+    this.onCancel,
+  });
+  final String title;
+  final String content;
+  final String confirmLabel;
+  final String cancelLabel;
+  final Color? confirmColor;
+  final VoidCallback? onConfirm;
+  final VoidCallback? onCancel;
+
+  static Future<bool> show(BuildContext context, {
+    required String title,
+    required String content,
+    String confirmLabel = '确认',
+    String cancelLabel = '取消',
+    Color? confirmColor,
+  }) async {
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (_) => MxDialog(
+        title: title, content: content,
+        confirmLabel: confirmLabel, cancelLabel: cancelLabel,
+        confirmColor: confirmColor,
+        onConfirm: () => Navigator.pop(context, true),
+        onCancel: () => Navigator.pop(context, false),
+      ),
+    );
+    return res == true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF0A1C2C) : Colors.white,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.06)),
+          boxShadow: [BoxShadow(color: scheme.primary.withOpacity(0.14), blurRadius: 28, offset: const Offset(0, 8))],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 10),
+            Text(content, style: TextStyle(fontSize: 14, color: scheme.onSurface.withOpacity(0.72))),
+            const SizedBox(height: 20),
+            Row(children: [
+              Expanded(child: MxButton(label: cancelLabel, onPressed: onCancel ?? () => Navigator.pop(context, false), filled: false)),
+              const SizedBox(width: 10),
+              Expanded(child: MxButton(label: confirmLabel, onPressed: onConfirm ?? () => Navigator.pop(context, true), color: confirmColor)),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MxPressable extends StatefulWidget {
   const _MxPressable({required this.child});
   final Widget child;

@@ -115,7 +115,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             const MxSectionLabel('流式'),
             MxCard(child: Row(children: [
               const Expanded(child: Text('SSE 流式模式', style: TextStyle(fontWeight: FontWeight.w800))),
-              Switch(value: state.config.stream, onChanged: state.setStream),
+              MxSwitch(value: state.config.stream, onChanged: state.setStream),
             ])),
             const MxSectionLabel('测试'),
             MxTextField(controller: testController, hint: '测试输入', minLines: 2, maxLines: 4),
