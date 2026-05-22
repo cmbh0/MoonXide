@@ -88,10 +88,14 @@ class _ReleaseScreenState extends State<ReleaseScreen> {
     final app   = context.read<AppState>();
     final build = context.read<BuildCenterState>();
     if (build.artifactDownloadUrl == null || app.token == null) return;
+    final name = (build.artifactName == null || build.artifactName!.trim().isEmpty)
+        ? 'artifact'
+        : build.artifactName!.trim().replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-');
+    final fileName = name.toLowerCase().endsWith('.zip') ? name : '$name.zip';
     final path = await ArtifactDownloader().download(
-      url: build.artifactDownloadUrl!, token: app.token!, fileName: 'moonxide-artifact.zip');
-    build.setArtifact(localPath: path, downloadUrl: build.artifactDownloadUrl);
-    await AndroidInstaller().openApk(path);
+      url: build.artifactDownloadUrl!, token: app.token!, fileName: fileName);
+    build.setArtifact(localPath: path, downloadUrl: build.artifactDownloadUrl, name: build.artifactName);
+    await AndroidInstaller().openFile(path);
   }
 
   Future<void> _pickReleaseAsset() async {
@@ -127,17 +131,18 @@ class _ReleaseScreenState extends State<ReleaseScreen> {
           MxCard(
             child: Row(
               children: [
-                Icon(Icons.android_rounded, color: scheme.primary),
+                Icon(Icons.archive_rounded, color: scheme.primary),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    build.artifactLocalPath ?? build.artifactDownloadUrl!,
+                    build.artifactLocalPath ?? build.artifactName ?? build.artifactDownloadUrl!,
                     maxLines: 2, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
                 MxIconBtn(
-                  icon: Icons.install_mobile_rounded,
+                  icon: Icons.download_rounded,
+                  tooltip: '下载/打开 GitHub Actions 附件',
                   onPressed: build.artifactDownloadUrl == null ? null : () => _downloadAndInstall(context),
                   size: 36,
                 ),

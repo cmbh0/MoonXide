@@ -5,6 +5,7 @@ class BuildCenterState extends ChangeNotifier {
   String? logText;
   String? artifactLocalPath;
   String? artifactDownloadUrl;
+  String? artifactName;
   bool busy = false;
   double progress = 0;
   bool completed = false;
@@ -52,9 +53,10 @@ class BuildCenterState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setArtifact({String? localPath, String? downloadUrl}) {
+  void setArtifact({String? localPath, String? downloadUrl, String? name}) {
     artifactLocalPath = localPath;
     artifactDownloadUrl = downloadUrl;
+    artifactName = name ?? artifactName;
     notifyListeners();
   }
 }

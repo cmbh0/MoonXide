@@ -95,7 +95,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (status == 'completed' && conclusion == 'success') {
         build.finish('构建完成：success');
         final artifacts = await state.github!.listArtifacts(owner, repo, run['id'] as int);
-        if (artifacts.isNotEmpty) build.setArtifact(downloadUrl: artifacts.first['archive_download_url'] as String?);
+        if (artifacts.isNotEmpty) {
+          final artifact = artifacts.first;
+          build.setArtifact(
+            downloadUrl: artifact['archive_download_url'] as String?,
+            name: artifact['name']?.toString(),
+          );
+        }
       } else if (status == 'completed') {
         build.fail('构建结束：${conclusion ?? 'unknown'}');
       } else {

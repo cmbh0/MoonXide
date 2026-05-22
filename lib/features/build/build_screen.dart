@@ -60,7 +60,11 @@ class BuildScreen extends StatelessWidget {
         build.finish('构建完成：success\n$htmlUrl');
         final artifacts = await state.github!.listArtifacts(owner, repo, run['id'] as int);
         if (artifacts.isNotEmpty) {
-          build.setArtifact(downloadUrl: artifacts.first['archive_download_url'] as String?);
+          final artifact = artifacts.first;
+          build.setArtifact(
+            downloadUrl: artifact['archive_download_url'] as String?,
+            name: artifact['name']?.toString(),
+          );
         }
         build.setLog(null);
       }
@@ -75,15 +79,22 @@ class BuildScreen extends StatelessWidget {
     }
   }
 
+  String _safeArtifactFileName(String? name) {
+    final base = (name == null || name.trim().isEmpty) ? 'artifact' : name.trim();
+    final safe = base.replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-');
+    return safe.toLowerCase().endsWith('.zip') ? safe : '$safe.zip';
+  }
+
   Future<void> _download(BuildContext context) async {
     final build = context.read<BuildCenterState>();
     if (build.artifactDownloadUrl == null || state.token == null) return;
     try {
+      final fileName = _safeArtifactFileName(build.artifactName);
       final path = await ArtifactDownloader().download(
-        url: build.artifactDownloadUrl!, token: state.token!, fileName: 'moonxide-artifact.zip');
-      build.setArtifact(localPath: path, downloadUrl: build.artifactDownloadUrl);
+        url: build.artifactDownloadUrl!, token: state.token!, fileName: fileName);
+      build.setArtifact(localPath: path, downloadUrl: build.artifactDownloadUrl, name: build.artifactName);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已下载到 $path')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已下载 GitHub Actions 附件到 $path')));
       }
     } catch (e) {
       if (context.mounted) {
@@ -96,10 +107,10 @@ class BuildScreen extends StatelessWidget {
     final build = context.read<BuildCenterState>();
     if (build.artifactLocalPath == null) return;
     try {
-      await AndroidInstaller().openApk(build.artifactLocalPath!);
+      await AndroidInstaller().openFile(build.artifactLocalPath!);
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('安装失败：$e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('打开失败：$e')));
       }
     }
   }
@@ -108,6 +119,9 @@ class BuildScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final build  = context.watch<BuildCenterState>();
     final scheme = Theme.of(context).colorScheme;
+    final artifactName = build.artifactName ?? 'GitHub Actions artifact';
+    final localPath = build.artifactLocalPath;
+    final isDownloadedApk = localPath != null && localPath.toLowerCase().endsWith('.apk');
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
@@ -160,11 +174,11 @@ class BuildScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
-                  Icon(Icons.android_rounded, color: scheme.primary),
+                  Icon(Icons.archive_rounded, color: scheme.primary),
                   const SizedBox(width: 8),
-                  const Text('APK 产物', style: TextStyle(fontWeight: FontWeight.w800)),
-                  const Spacer(),
-                  MxBadge('可下载', color: Colors.green),
+                  Expanded(child: Text(artifactName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  const SizedBox(width: 8),
+                  MxBadge(localPath == null ? 'GitHub 附件' : '已下载', color: Colors.green),
                 ]),
                 const SizedBox(height: 8),
                 Text(
@@ -175,8 +189,8 @@ class BuildScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 MxActionRow(children: [
-                  MxButton(label: '下载', icon: Icons.download_rounded,       onPressed: () => _download(context), filled: false),
-                  MxButton(label: '安装', icon: Icons.install_mobile_rounded, onPressed: build.artifactLocalPath == null ? null : () => _install(context)),
+                  MxButton(label: '下载附件', icon: Icons.download_rounded, onPressed: () => _download(context), filled: false),
+                  MxButton(label: isDownloadedApk ? '安装 APK' : '打开附件', icon: isDownloadedApk ? Icons.install_mobile_rounded : Icons.open_in_new_rounded, onPressed: localPath == null ? null : () => _install(context)),
                 ]),
               ],
             ),
