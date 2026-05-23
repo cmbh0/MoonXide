@@ -131,7 +131,7 @@ class _TokenGateScreenState extends State<TokenGateScreen>
                   // ── 标题 ──────────────────────────────────────────────────
                   Text('连接 GitHub', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: isDark ? const Color(0xFFE9F8FF) : MoonXideTheme.deepBlue)),
                   const SizedBox(height: 8),
-                  Text('MoonXide 通过 GitHub Personal Access Token 直接操作你的仓库、触发云端编译和发布版本，Token 仅存储在本地设备，不会上传到任何服务器。', style: TextStyle(fontSize: 13, height: 1.6, color: scheme.onSurface.withOpacity(0.55))),
+                  Text('请提供 GitHub Token，我们需要权限来访问你的仓库、执行云端编译等。Token 仅保存在本地设备。', style: TextStyle(fontSize: 13, height: 1.6, color: scheme.onSurface.withOpacity(0.55))),
 
                   const SizedBox(height: 24),
 
@@ -182,11 +182,19 @@ class _TokenGateScreenState extends State<TokenGateScreen>
 
                   const SizedBox(height: 12),
 
-                  // ── 状态反馈 ──────────────────────────────────────────────
+// ─── 状态反馈 ──────────────────────────────────────────────
                   if (state.tokenStatus != null)
-                    _StatusRow(text: state.tokenStatus!, ok: state.tokenValidated, scheme: scheme),
+                    MxCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      color: state.tokenValidated ? Colors.green.withOpacity(0.1) : scheme.primary.withOpacity(0.1),
+                      child: _StatusRow(text: state.tokenStatus!, ok: state.tokenValidated, scheme: scheme),
+                    ),
                   if (state.error != null)
-                    _StatusRow(text: state.error!, ok: false, scheme: scheme, isError: true),
+                    MxCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      color: Colors.red.withOpacity(0.1),
+                      child: _StatusRow(text: state.error!, ok: false, scheme: scheme, isError: true),
+                    ),
 
                   const SizedBox(height: 20),
 
@@ -199,8 +207,8 @@ class _TokenGateScreenState extends State<TokenGateScreen>
                   ),
                   const SizedBox(height: 10),
                   MxButton(
-                    label: state.loading ? '验证中…' : '验证并进入 MoonXide',
-                    icon: state.loading ? Icons.hourglass_top_rounded : Icons.login_rounded,
+                    label: state.loading ? '验证中…' : '进入系统',
+                    icon: state.loading ? Icons.hourglass_top_rounded : Icons.arrow_forward_rounded,
                     onPressed: state.loading ? null : () => context.read<AppState>().acceptToken(_ctrl.text),
                   ),
                   const SizedBox(height: 36),
@@ -221,11 +229,11 @@ class _PermCard extends StatelessWidget {
   final ColorScheme scheme;
 
   static const _perms = [
-    (Icons.folder_rounded,       'repo',             '读写仓库文件、提交代码'),
-    (Icons.play_circle_rounded,  'workflow',         '触发 GitHub Actions 云编译'),
-    (Icons.person_rounded,       'read:user',        '读取账号信息和头像'),
-    (Icons.inventory_2_rounded,  'write:packages',   '发布 Release 产物'),
-    (Icons.delete_forever_rounded,'delete_repo',     '删除仓库（可选操作）'),
+    (Icons.folder_rounded,       'repo',             '读写代码'),
+    (Icons.play_circle_rounded,  'workflow',         '触发编译'),
+    (Icons.person_rounded,       'read:user',        '读取账号'),
+    (Icons.inventory_2_rounded,  'write:packages',   '发布产物'),
+    (Icons.delete_forever_rounded,'delete_repo',     '删除仓库'),
   ];
 
   @override
@@ -244,16 +252,25 @@ class _PermCard extends StatelessWidget {
           Text('所需权限说明', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: scheme.primary)),
         ]),
         const SizedBox(height: 12),
-        ..._perms.map((p) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(children: [
-            Icon(p.$1, size: 14, color: scheme.primary.withOpacity(0.70)),
-            const SizedBox(width: 8),
-            Text(p.$2, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, fontFamily: 'monospace', color: scheme.onSurface.withOpacity(0.80))),
-            const SizedBox(width: 8),
-            Expanded(child: Text(p.$3, style: TextStyle(fontSize: 11, color: scheme.onSurface.withOpacity(0.50)))),
-          ]),
-        )),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _perms.map((p) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: scheme.primary.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(p.$1, size: 12, color: scheme.primary),
+                const SizedBox(width: 4),
+                Text(p.$2, style: TextStyle(fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.bold, color: scheme.onSurface)),
+              ],
+            ),
+          )).toList(),
+        ),
       ]),
     );
   }
@@ -271,14 +288,11 @@ class _StatusRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = isError ? Colors.red : (ok ? Colors.green : scheme.primary);
     final icon  = isError ? Icons.error_rounded : (ok ? Icons.check_circle_rounded : Icons.info_rounded);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 7),
-        Expanded(child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color))),
-      ]),
-    );
+    return Row(children: [
+      Icon(icon, size: 16, color: color),
+      const SizedBox(width: 8),
+      Expanded(child: Text(text, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color))),
+    ]);
   }
 }
 

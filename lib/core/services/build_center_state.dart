@@ -17,6 +17,13 @@ class BuildCenterState extends ChangeNotifier {
   int? currentRunId;
   String? currentStep;
   BuildOutcome outcome = BuildOutcome.idle;
+  
+  bool hideToast = false;
+
+  void dismissToast() {
+    hideToast = true;
+    notifyListeners();
+  }
 
   /// 单次性通知载荷：HomeScreen 监听后弹 SnackBar，再调用 [consumeNotice] 清空。
   String? _pendingNotice;
@@ -39,8 +46,8 @@ class BuildCenterState extends ChangeNotifier {
     artifactDownloadUrl = null;
     artifactName = null;
     logText = null;
-    _pendingNotice = value;
-    _noticeIsError = false;
+    hideToast = false;
+    // 不在这里设置 pendingNotice，统一由右下角的 Toast 展示
     notifyListeners();
   }
 
@@ -66,8 +73,7 @@ class BuildCenterState extends ChangeNotifier {
     completed = true;
     progress = 1;
     outcome = BuildOutcome.success;
-    _pendingNotice = value;
-    _noticeIsError = false;
+    hideToast = false;
     notifyListeners();
   }
 
@@ -76,8 +82,7 @@ class BuildCenterState extends ChangeNotifier {
     busy = false;
     completed = false;
     outcome = BuildOutcome.failure;
-    _pendingNotice = value;
-    _noticeIsError = true;
+    hideToast = false;
     notifyListeners();
   }
 

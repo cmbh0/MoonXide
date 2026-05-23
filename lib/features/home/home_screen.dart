@@ -141,6 +141,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           await logFile.writeAsBytes(bytes);
           final summary = LogParser().summarize(String.fromCharCodes(bytes));
           build.setLog(summary, filePath: logFile.path);
+          
+          if (mounted) {
+            _openRight(_RightPanel.build);
+          }
         } catch (_) {}
       } else {
         final stepText = currentStep != null ? '\n当前步骤：$currentStep' : '';
@@ -171,30 +175,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _flushBuildNotice(BuildContext context, BuildCenterState build) {
     final notice = build.pendingNotice;
     if (notice == null) return;
-    final isError = build.pendingNoticeIsError;
     build.consumeNotice();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final messenger = ScaffoldMessenger.maybeOf(context);
-      if (messenger == null) return;
-      messenger.clearSnackBars();
-      messenger.showSnackBar(SnackBar(
-        content: Row(children: [
-          Icon(
-            isError ? Icons.error_outline_rounded : (build.completed ? Icons.check_circle_rounded : Icons.info_outline_rounded),
-            size: 18,
-            color: Colors.white,
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: Text(notice.split('\n').first, maxLines: 2, overflow: TextOverflow.ellipsis)),
-        ]),
-        backgroundColor: isError
-            ? const Color(0xFFB3261E)
-            : (build.completed ? const Color(0xFF1E8E3E) : const Color(0xFF3B7BBF)),
-        duration: Duration(seconds: isError ? 6 : 3),
-        behavior: SnackBarBehavior.floating,
-      ));
-    });
+    // 之前这里是 ScaffoldMessenger.showSnackBar，现在已经通过右下角 _BuildToast 接管。
+    // 因此这里可以直接置空或者留作以后其他用途的通知
   }
 
   String _rightTitle() {
@@ -306,8 +289,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // 工具栏总高 = 状态栏 + 固定高度
     final toolbarTotal = topPad + _toolbarH;
     _ensureBuildPolling(state, build);
-    _flushBuildNotice(context, build);
-
+    
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF071722) : MoonXideTheme.snow,
       body: Stack(
@@ -426,7 +408,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
 
           // ── 右下角构建迷你通知条 ─────────────────────────────────────────────
-          if (build.busy || build.outcome == BuildOutcome.success || build.outcome == BuildOutcome.failure)
+          if ((build.busy || build.outcome == BuildOutcome.success || build.outcome == BuildOutcome.failure) && !build.hideToast)
             Positioned(
               right: 12,
               bottom: 14,
@@ -773,41 +755,64 @@ class _BuildToast extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Container(
-        width: 230,
-        padding: const EdgeInsets.all(12),
+        width: 250,
+        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
         decoration: BoxDecoration(
           color: bgColor.withOpacity(isRunning ? 0.74 : 0.92),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: borderColor.withOpacity(0.45)),
           boxShadow: [BoxShadow(color: borderColor.withOpacity(0.22), blurRadius: 22, offset: const Offset(0, 8))],
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Row(children: [
-              if (isRunning)
-                SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(scheme.primary)))
-              else
-                Icon(icon, size: 16, color: Colors.white),
-              const SizedBox(width: 8),
-              Expanded(child: Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: isRunning ? null : Colors.white))),
-              if (isRunning)
-                Text('${(center.progress * 100).round()}%', style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w900)),
-            ]),
-            if (isRunning) ...[
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(99),
-                child: LinearProgressIndicator(value: center.progress <= 0 ? null : center.progress, minHeight: 4),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  if (isRunning)
+                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(scheme.primary)))
+                  else
+                    Icon(icon, size: 16, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: isRunning ? null : Colors.white))),
+                  if (isRunning)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 18),
+                      child: Text('${(center.progress * 100).round()}%', style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w900)),
+                    ),
+                ]),
+                if (isRunning) ...[
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 18),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(value: center.progress <= 0 ? null : center.progress, minHeight: 4),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.only(right: 18),
+                  child: Text(
+                    center.status.split('\n').first,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: isRunning ? scheme.onSurface.withOpacity(0.62) : Colors.white.withOpacity(0.85)),
+                  ),
+                ),
+              ],
+            ),
+            Positioned(
+              top: -8,
+              right: -8,
+              child: IconButton(
+                icon: Icon(Icons.close_rounded, size: 16, color: isRunning ? scheme.onSurface.withOpacity(0.5) : Colors.white.withOpacity(0.8)),
+                onPressed: () => center.dismissToast(),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
               ),
-            ],
-            const SizedBox(height: 6),
-            Text(
-              center.status.split('\n').first,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: isRunning ? scheme.onSurface.withOpacity(0.62) : Colors.white.withOpacity(0.85)),
             ),
           ],
         ),
