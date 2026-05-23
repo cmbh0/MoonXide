@@ -82,19 +82,29 @@ class MxCard extends StatelessWidget {
         ? Colors.white.withOpacity(0.08)
         : scheme.primary.withOpacity(0.10);
     final card = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Material(
-        color: base.withOpacity(isDark ? 0.82 : 0.90),
+        color: base.withOpacity(isDark ? 0.85 : 0.92),
         borderRadius: BorderRadius.circular(radius),
+        elevation: 0,
+        shadowColor: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(radius),
           onTap: onTap,
-          splashColor: scheme.primary.withOpacity(0.07),
+          splashColor: scheme.primary.withOpacity(0.08),
+          highlightColor: scheme.primary.withOpacity(0.04),
           child: Container(
-            padding: padding ?? const EdgeInsets.all(14),
+            padding: padding ?? const EdgeInsets.all(15),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(radius),
-              border: Border.all(color: borderC),
+              border: Border.all(color: borderC, width: 1.0),
+              boxShadow: [
+                BoxShadow(
+                  color: scheme.primary.withOpacity(isDark ? 0.08 : 0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 3),
+                ),
+              ],
             ),
             child: child,
           ),
@@ -195,43 +205,69 @@ class MxButton extends StatelessWidget {
     final scheme   = Theme.of(context).colorScheme;
     final c        = color ?? scheme.primary;
     final disabled = onPressed == null;
+    final radius = small ? 10.0 : 14.0;
     return _MxPressable(
       child: Material(
-      color: filled
-          ? c.withOpacity(disabled ? 0.30 : 1.0)
-          : c.withOpacity(0.08),
-      borderRadius: BorderRadius.circular(small ? 10 : 14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(small ? 10 : 14),
-        onTap: onPressed,
-        child: Container(
-          padding: EdgeInsets.symmetric(
-              horizontal: small ? 12 : 18, vertical: small ? 8 : 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(small ? 10 : 14),
-            border: filled
-                ? null
-                : Border.all(color: c.withOpacity(0.32)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon,
-                    size: small ? 15 : 17,
-                    color: filled ? Colors.white : c),
-                const SizedBox(width: 6),
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(radius),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(radius),
+          onTap: onPressed,
+          splashColor: filled ? Colors.white.withOpacity(0.18) : c.withOpacity(0.12),
+          highlightColor: filled ? Colors.white.withOpacity(0.08) : c.withOpacity(0.06),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+                horizontal: small ? 12 : 18, vertical: small ? 8 : 12),
+            decoration: BoxDecoration(
+              gradient: filled && !disabled
+                  ? LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        c,
+                        Color.lerp(c, Colors.black, 0.18) ?? c,
+                      ],
+                    )
+                  : null,
+              color: filled
+                  ? (disabled ? c.withOpacity(0.30) : null)
+                  : c.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(radius),
+              border: filled
+                  ? null
+                  : Border.all(color: c.withOpacity(0.32), width: 1.2),
+              boxShadow: filled && !disabled
+                  ? [
+                      BoxShadow(
+                        color: c.withOpacity(0.28),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon,
+                      size: small ? 15 : 17,
+                      color: filled ? Colors.white : c),
+                  const SizedBox(width: 6),
+                ],
+                Text(label,
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: small ? 13 : 14,
+                        letterSpacing: 0.2,
+                        color: filled ? Colors.white : c)),
               ],
-              Text(label,
-                  style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: small ? 13 : 14,
-                      color: filled ? Colors.white : c)),
-            ],
+            ),
           ),
         ),
       ),
-    ));
+    );
   }
 }
 
@@ -266,34 +302,47 @@ class MxTextField extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return TextField(
-      controller: controller,
-      obscureText: obscure,
-      minLines: minLines,
-      maxLines: maxLines,
-      onChanged: onChanged,
-      keyboardType: keyboardType,
-      style: TextStyle(color: scheme.onSurface),
-      decoration: InputDecoration(
-        hintText: hint,
-        labelText: label,
-        prefixIcon: prefix,
-        suffixIcon: suffix,
-        filled: true,
-        fillColor: (isDark ? const Color(0xFF0F2230) : Colors.white)
-            .withOpacity(isDark ? 0.82 : 0.90),
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: scheme.primary.withOpacity(0.18))),
-        enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: scheme.primary.withOpacity(0.18))),
-        focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide:
-                BorderSide(color: scheme.primary.withOpacity(0.60), width: 1.5)),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(13),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(isDark ? 0.05 : 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        obscureText: obscure,
+        minLines: minLines,
+        maxLines: maxLines,
+        onChanged: onChanged,
+        keyboardType: keyboardType,
+        style: TextStyle(color: scheme.onSurface, fontSize: 14),
+        decoration: InputDecoration(
+          hintText: hint,
+          labelText: label,
+          prefixIcon: prefix,
+          suffixIcon: suffix,
+          hintStyle: TextStyle(color: scheme.onSurface.withOpacity(0.35), fontSize: 14),
+          filled: true,
+          fillColor: (isDark ? const Color(0xFF0F2230) : Colors.white)
+              .withOpacity(isDark ? 0.85 : 0.94),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(13),
+              borderSide: BorderSide(color: scheme.primary.withOpacity(0.16))),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(13),
+              borderSide: BorderSide(color: scheme.primary.withOpacity(0.16))),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(13),
+              borderSide:
+                  BorderSide(color: scheme.primary.withOpacity(0.55), width: 1.5)),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        ),
       ),
     );
   }
@@ -330,14 +379,29 @@ class MxBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = color ?? Theme.of(context).colorScheme.primary;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-          color: c.withOpacity(0.13),
+          gradient: LinearGradient(
+            colors: [c.withOpacity(0.16), c.withOpacity(0.10)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: c.withOpacity(0.28))),
+          border: Border.all(color: c.withOpacity(0.32), width: 0.8),
+          boxShadow: [
+            BoxShadow(
+              color: c.withOpacity(0.10),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+      ),
       child: Text(label,
           style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.w800, color: c)),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.3,
+              color: c)),
     );
   }
 }
@@ -417,25 +481,45 @@ class MxIconBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = active
-        ? scheme.primary.withOpacity(0.14)
+        ? scheme.primary.withOpacity(0.16)
         : Colors.transparent;
     final w = Material(
       color: bg,
-      borderRadius: BorderRadius.circular(11),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        borderRadius: BorderRadius.circular(11),
+        borderRadius: BorderRadius.circular(12),
         onTap: onPressed,
         onLongPress: onLongPress,
-        child: SizedBox(
+        splashColor: scheme.primary.withOpacity(0.14),
+        highlightColor: scheme.primary.withOpacity(0.08),
+        child: Container(
           width: size,
           height: size,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: active
+                ? Border.all(color: scheme.primary.withOpacity(0.35), width: 1.0)
+                : null,
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: scheme.primary.withOpacity(isDark ? 0.18 : 0.12),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : null,
+          ),
           child: Icon(
             icon,
             size: size * 0.48,
             color: active
                 ? scheme.primary
-                : scheme.onSurface.withOpacity(0.56),
+                : (onPressed == null && onLongPress == null
+                    ? scheme.onSurface.withOpacity(0.28)
+                    : scheme.onSurface.withOpacity(0.56)),
           ),
         ),
       ),
