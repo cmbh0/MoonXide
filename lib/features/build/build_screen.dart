@@ -45,20 +45,47 @@ class BuildScreen extends StatelessWidget {
       final runs = await state.github!.listWorkflowRuns(owner, repo);
       if (runs.isEmpty) { build.setStatus('没有构建记录'); return; }
       final run        = runs.first;
+      final runId      = run['id'] as int;
       final status     = run['status'];
       final conclusion = run['conclusion'];
       final htmlUrl    = run['html_url'];
-      final progress = status == 'completed'
-          ? 1.0
-          : (status == 'in_progress' ? 0.55 : 0.22);
+      
+      double progress = 0.12;
+      String? currentStep;
+      if (status == 'completed') {
+        progress = 1.0;
+      } else if (status == 'in_progress') {
+        try {
+          final jobs = await state.github!.listWorkflowJobs(owner, repo, runId);
+          if (jobs.isNotEmpty) {
+            final job = jobs.first;
+            final steps = (job['steps'] as List?) ?? const [];
+            if (steps.isNotEmpty) {
+              final total = steps.length;
+              final done = steps.where((s) => s['status'] == 'completed').length;
+              final running = steps.where((s) => s['status'] == 'in_progress').toList();
+              if (running.isNotEmpty) currentStep = running.first['name']?.toString();
+              progress = 0.15 + 0.80 * (done / total);
+            } else {
+              progress = 0.25;
+            }
+          }
+        } catch (_) {
+          progress = 0.55;
+        }
+      }
+      
+      final stepText = currentStep != null ? '\n当前步骤：$currentStep' : '';
       build.updateProgress(
-        statusText: '状态：$status\n结果：${conclusion ?? '运行中'}\n$htmlUrl',
+        statusText: '状态：$status\n结果：${conclusion ?? '运行中'}$stepText\n$htmlUrl',
         value: progress,
         runUrl: htmlUrl?.toString(),
+        runId: runId,
+        step: currentStep,
       );
       if (status == 'completed' && conclusion == 'success') {
         build.finish('构建完成：success\n$htmlUrl');
-        final artifacts = await state.github!.listArtifacts(owner, repo, run['id'] as int);
+        final artifacts = await state.github!.listArtifacts(owner, repo, runId);
         if (artifacts.isNotEmpty) {
           final artifact = artifacts.first;
           build.setArtifact(
@@ -70,7 +97,7 @@ class BuildScreen extends StatelessWidget {
       }
       if (status == 'completed' && conclusion != 'success') {
         build.fail('构建失败：${conclusion ?? 'unknown'}\n$htmlUrl');
-        final bytes   = await state.github!.downloadRunLogs(owner, repo, run['id'] as int);
+        final bytes   = await state.github!.downloadRunLogs(owner, repo, runId);
         final summary = LogParser().summarize(String.fromCharCodes(bytes));
         build.setLog(summary);
       }

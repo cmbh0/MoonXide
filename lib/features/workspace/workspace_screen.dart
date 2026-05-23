@@ -440,6 +440,14 @@ add_executable(\${PROJECT_NAME} main.cpp)
     super.dispose();
   }
 
+  Future<void> _safePopOverlay() async {
+    if (!mounted) return;
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      await nav.maybePop();
+    }
+  }
+
   Future<void> _fetchRepos({bool force = false}) async {
     if (widget.state.github == null) return;
     if (!force && _repos.isNotEmpty) return;
@@ -660,7 +668,7 @@ add_executable(\${PROJECT_NAME} main.cpp)
 
       await _fetchRepos(force: true);
       await _fetchTree('', force: true);
-      if (mounted) Navigator.pop(context);
+      await _safePopOverlay();
     } catch (e) {
       setState(() => _error = '创建失败：$e');
     }
@@ -678,7 +686,7 @@ add_executable(\${PROJECT_NAME} main.cpp)
       widget.state.selectRepository(owner, newName);
       await _fetchRepos(force: true);
       await _fetchTree('', force: true);
-      if (mounted) Navigator.pop(context);
+      await _safePopOverlay();
     } catch (e) {
       setState(() => _error = '重命名失败：$e');
     }
@@ -694,7 +702,7 @@ add_executable(\${PROJECT_NAME} main.cpp)
       setState(() => _roots = []);
       _treeCache.clear();
       await _fetchRepos(force: true);
-      if (mounted) Navigator.pop(context);
+      await _safePopOverlay();
     } catch (e) {
       setState(() => _error = '删除失败：$e');
     }
@@ -728,7 +736,7 @@ add_executable(\${PROJECT_NAME} main.cpp)
         onPressed: () async {
           await Clipboard.setData(ClipboardData(text: node.path));
           if (mounted) {
-            Navigator.pop(context);
+            await _safePopOverlay();
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制路径'), duration: Duration(seconds: 1)));
           }
         },
@@ -743,8 +751,8 @@ add_executable(\${PROJECT_NAME} main.cpp)
           icon: Icons.edit_rounded,
           onPressed: () async {
             final newName = renameCtrl.text.trim();
-            if (newName.isEmpty || newName == node.name) { Navigator.pop(context); return; }
-            Navigator.pop(context);
+            if (newName.isEmpty || newName == node.name) { await _safePopOverlay(); return; }
+            await _safePopOverlay();
             await _renameFile(node, newName);
           },
         ),
@@ -756,7 +764,7 @@ add_executable(\${PROJECT_NAME} main.cpp)
         icon: Icons.delete_forever_rounded,
         color: Colors.red,
         onPressed: () async {
-          Navigator.pop(context);
+          await _safePopOverlay();
           final ok = await MxDialog.show(context,
             title: '确认删除？',
             content: '将删除 ${node.name}，此操作不可恢复。',

@@ -88,13 +88,41 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       final runs = await state.github!.listWorkflowRuns(owner, repo);
       if (runs.isEmpty) return;
       final run = runs.first;
+      final runId = run['id'] as int;
       final status = run['status'];
       final conclusion = run['conclusion'];
       final url = run['html_url']?.toString();
-      final progress = status == 'completed' ? 1.0 : (status == 'in_progress' ? 0.62 : 0.25);
+
+      double progress = 0.12;
+      String? currentStep;
+      if (status == 'completed') {
+        progress = 1.0;
+      } else if (status == 'in_progress') {
+        try {
+          final jobs = await state.github!.listWorkflowJobs(owner, repo, runId);
+          if (jobs.isNotEmpty) {
+            final job = jobs.first;
+            final steps = (job['steps'] as List?) ?? const [];
+            if (steps.isNotEmpty) {
+              final total = steps.length;
+              final done = steps.where((s) => s['status'] == 'completed').length;
+              final running = steps.where((s) => s['status'] == 'in_progress').toList();
+              if (running.isNotEmpty) currentStep = running.first['name']?.toString();
+              progress = 0.15 + 0.80 * (done / total);
+            } else {
+              progress = 0.25;
+            }
+          } else {
+            progress = 0.20;
+          }
+        } catch (_) {
+          progress = 0.55;
+        }
+      }
+
       if (status == 'completed' && conclusion == 'success') {
         build.finish('构建完成：success');
-        final artifacts = await state.github!.listArtifacts(owner, repo, run['id'] as int);
+        final artifacts = await state.github!.listArtifacts(owner, repo, runId);
         if (artifacts.isNotEmpty) {
           final artifact = artifacts.first;
           build.setArtifact(
@@ -103,9 +131,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           );
         }
       } else if (status == 'completed') {
-        build.fail('构建结束：${conclusion ?? 'unknown'}');
+        build.fail('构建失败：${conclusion ?? 'unknown'}');
       } else {
-        build.updateProgress(statusText: '构建中：$status', value: progress, runUrl: url);
+        final stepText = currentStep != null ? '\n当前步骤：$currentStep' : '';
+        build.updateProgress(
+          statusText: '构建中：$status$stepText',
+          value: progress,
+          runUrl: url,
+          runId: runId,
+          step: currentStep,
+        );
       }
     } catch (_) {}
   }
@@ -116,7 +151,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _buildPollTimer = null;
       return;
     }
-    _buildPollTimer ??= Timer.periodic(const Duration(minutes: 2), (_) => _pollBuild(state, build));
+    if (_buildPollTimer == null) {
+      // 立即拉一次，避免用户等两分钟才看到第一次状态
+      _pollBuild(state, build);
+      _buildPollTimer = Timer.periodic(const Duration(minutes: 2), (_) => _pollBuild(state, build));
+    }
+  }
+
+  void _flushBuildNotice(BuildContext context, BuildCenterState build) {
+    final notice = build.pendingNotice;
+    if (notice == null) return;
+    final isError = build.pendingNoticeIsError;
+    build.consumeNotice();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger == null) return;
+      messenger.clearSnackBars();
+      messenger.showSnackBar(SnackBar(
+        content: Row(children: [
+          Icon(
+            isError ? Icons.error_outline_rounded : (build.completed ? Icons.check_circle_rounded : Icons.info_outline_rounded),
+            size: 18,
+            color: Colors.white,
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Text(notice.split('\n').first, maxLines: 2, overflow: TextOverflow.ellipsis)),
+        ]),
+        backgroundColor: isError
+            ? const Color(0xFFB3261E)
+            : (build.completed ? const Color(0xFF1E8E3E) : const Color(0xFF3B7BBF)),
+        duration: Duration(seconds: isError ? 6 : 3),
+        behavior: SnackBarBehavior.floating,
+      ));
+    });
   }
 
   String _rightTitle() {
@@ -228,6 +296,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // 工具栏总高 = 状态栏 + 固定高度
     final toolbarTotal = topPad + _toolbarH;
     _ensureBuildPolling(state, build);
+    _flushBuildNotice(context, build);
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF071722) : MoonXideTheme.snow,
@@ -347,7 +416,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
 
           // ── 右下角构建迷你通知条 ─────────────────────────────────────────────
-          if (build.busy)
+          if (build.busy || build.outcome == BuildOutcome.success || build.outcome == BuildOutcome.failure)
             Positioned(
               right: 12,
               bottom: 14,
@@ -673,35 +742,63 @@ class _BuildToast extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final title = center.status.contains('推送') ? '正在推送' : '正在构建';
+    
+    final isRunning = center.outcome == BuildOutcome.running;
+    final isSuccess = center.outcome == BuildOutcome.success;
+    final isFailure = center.outcome == BuildOutcome.failure;
+    
+    final bgColor = isSuccess
+        ? const Color(0xFF1E8E3E)
+        : (isFailure ? const Color(0xFFB3261E) : (isDark ? const Color(0xFF0F2230) : Colors.white));
+    final borderColor = isSuccess
+        ? const Color(0xFF4CAF50)
+        : (isFailure ? const Color(0xFFEF5350) : scheme.primary);
+    final icon = isSuccess
+        ? Icons.check_circle_rounded
+        : (isFailure ? Icons.error_outline_rounded : Icons.build_circle_rounded);
+    final title = isSuccess
+        ? '构建成功'
+        : (isFailure ? '构建失败' : (center.status.contains('推送') ? '正在推送' : '正在构建'));
+    
     return Material(
       color: Colors.transparent,
       child: Container(
         width: 230,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: (isDark ? const Color(0xFF0F2230) : Colors.white).withOpacity(0.74),
+          color: bgColor.withOpacity(isRunning ? 0.74 : 0.92),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: scheme.primary.withOpacity(0.22)),
-          boxShadow: [BoxShadow(color: scheme.primary.withOpacity(0.18), blurRadius: 22, offset: const Offset(0, 8))],
+          border: Border.all(color: borderColor.withOpacity(0.45)),
+          boxShadow: [BoxShadow(color: borderColor.withOpacity(0.22), blurRadius: 22, offset: const Offset(0, 8))],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(scheme.primary))),
+              if (isRunning)
+                SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(scheme.primary)))
+              else
+                Icon(icon, size: 16, color: Colors.white),
               const SizedBox(width: 8),
-              Expanded(child: Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900))),
-              Text('${(center.progress * 100).round()}%', style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w900)),
+              Expanded(child: Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: isRunning ? null : Colors.white))),
+              if (isRunning)
+                Text('${(center.progress * 100).round()}%', style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w900)),
             ]),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(99),
-              child: LinearProgressIndicator(value: center.progress <= 0 ? null : center.progress, minHeight: 4),
-            ),
+            if (isRunning) ...[
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(99),
+                child: LinearProgressIndicator(value: center.progress <= 0 ? null : center.progress, minHeight: 4),
+              ),
+            ],
             const SizedBox(height: 6),
-            Text(center.status.split('\n').first, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: scheme.onSurface.withOpacity(0.62))),
+            Text(
+              center.status.split('\n').first,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: isRunning ? scheme.onSurface.withOpacity(0.62) : Colors.white.withOpacity(0.85)),
+            ),
           ],
         ),
       ),

@@ -133,6 +133,11 @@ class GithubService {
     return List<Map<String, dynamic>>.from(data['artifacts'] as List);
   }
 
+  Future<List<Map<String, dynamic>>> listWorkflowJobs(String owner, String repo, int runId) async {
+    final data = await _request('GET', '/repos/$owner/$repo/actions/runs/$runId/jobs');
+    return List<Map<String, dynamic>>.from(data['jobs'] as List);
+  }
+
   Future<Uint8List> downloadRunLogs(String owner, String repo, int runId) async {
     final res = await http.get(Uri.parse('$_base/repos/$owner/$repo/actions/runs/$runId/logs'), headers: _headers);
     if (res.statusCode >= 200 && res.statusCode < 300) return res.bodyBytes;

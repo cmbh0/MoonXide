@@ -553,12 +553,12 @@ class MxDialog extends StatelessWidget {
     final res = await showDialog<bool>(
       context: context,
       barrierColor: Colors.black.withOpacity(0.45),
-      builder: (_) => MxDialog(
+      builder: (dialogCtx) => MxDialog(
         title: title, content: content,
         confirmLabel: confirmLabel, cancelLabel: cancelLabel,
         confirmColor: confirmColor,
-        onConfirm: () => Navigator.pop(context, true),
-        onCancel: () => Navigator.pop(context, false),
+        onConfirm: () => Navigator.of(dialogCtx).pop(true),
+        onCancel: () => Navigator.of(dialogCtx).pop(false),
       ),
     );
     return res == true;
