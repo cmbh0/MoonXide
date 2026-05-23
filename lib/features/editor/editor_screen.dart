@@ -208,6 +208,28 @@ class EditorScreenState extends State<EditorScreen> {
     editor.updateContent(next);
   }
 
+  Future<void> _handleErrorTap(BuildContext context, EditorDiagnostic diag, EditorState editor) async {
+    if (editor.readOnly) return;
+    final confirmed = await MxDialog.show(
+      context,
+      title: '使用 AI 修复错误？',
+      content: '${diag.severity}: ${diag.message}\n\n将调用 AI 分析并流式修复代码。',
+      confirmLabel: '修复',
+      cancelLabel: '取消',
+    );
+    if (!confirmed || !context.mounted) return;
+    
+    // TODO: 实现 AI 流式修复逻辑
+    // 1. 提取错误上下文（当前文件内容 + 错误信息）
+    // 2. 调用 AI 流式 API
+    // 3. 流式回写代码
+    // 4. 显示局部魔法动画
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('AI 修复功能开发中，敬请期待')),
+    );
+  }
+
   // ── 构建 ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -293,8 +315,11 @@ class EditorScreenState extends State<EditorScreen> {
                   ),
                 ),
               ),
+                  ],
+                ),
+              ),
               
-              // 代码区（横向可滚动 + 错误波浪线 overlay）
+              // 代码区（横向可滚动 + 错误波浪线 overlay + 错误点击区域）
               Expanded(
                 child: Stack(
                   children: [
@@ -341,12 +366,18 @@ class EditorScreenState extends State<EditorScreen> {
                           ),
                         ),
                       ),
+                    // 错误点击热区
+                    if (diagnostics.isNotEmpty)
+                      Positioned.fill(
+                        child: _ErrorTapLayer(
+                          text: contentController.text,
+                          diagnostics: diagnostics,
+                          onTapError: (diag) => _handleErrorTap(context, diag, editor),
+                        ),
+                      ),
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
 
         if (editor.readOnly)
           Container(
@@ -430,6 +461,47 @@ class _SymbolBar extends StatelessWidget {
           },
         ),
       ),
+    );
+  }
+}
+
+// ─── 错误点击热区层 ───────────────────────────────────────────────────────────
+class _ErrorTapLayer extends StatelessWidget {
+  const _ErrorTapLayer({
+    required this.text,
+    required this.diagnostics,
+    required this.onTapError,
+  });
+  final String text;
+  final List<EditorDiagnostic> diagnostics;
+  final ValueChanged<EditorDiagnostic> onTapError;
+
+  @override
+  Widget build(BuildContext context) {
+    if (diagnostics.isEmpty || text.isEmpty) return const SizedBox.shrink();
+    final lines = text.split('\n');
+    const lineH = 21.7;
+    const padTop = 2.0;
+    
+    return Stack(
+      children: diagnostics.asMap().entries.map((entry) {
+        final idx = entry.key;
+        final diag = entry.value;
+        // 简单策略：为每个诊断在第一行创建点击区域
+        if (idx >= lines.length) return const SizedBox.shrink();
+        final y = padTop + idx * lineH;
+        return Positioned(
+          left: 10,
+          top: y,
+          width: 600,
+          height: lineH,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => onTapError(diag),
+            child: Container(color: Colors.transparent),
+          ),
+        );
+      }).toList(),
     );
   }
 }
