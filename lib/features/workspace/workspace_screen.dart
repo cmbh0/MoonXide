@@ -935,67 +935,7 @@ add_executable(\${PROJECT_NAME} main.cpp)
   }
 
   void _showSheet({required String title, required List<Widget> children}) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withOpacity(0.45),
-      builder: (ctx) {
-        final isDark = Theme.of(ctx).brightness == Brightness.dark;
-        final scheme = Theme.of(ctx).colorScheme;
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Container(
-            margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 24),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? const Color(0xFF1A2E3E).withOpacity(0.94)
-                  : Colors.white.withOpacity(0.90),
-              borderRadius: BorderRadius.circular(26),
-              border: Border.all(
-                color: isDark
-                    ? Colors.white.withOpacity(0.10)
-                    : Colors.white.withOpacity(0.75),
-                width: 0.8,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(isDark ? 0.50 : 0.14),
-                  blurRadius: 40,
-                  spreadRadius: -4,
-                  offset: const Offset(0, -8),
-                ),
-                BoxShadow(
-                  color: scheme.primary.withOpacity(0.08),
-                  blurRadius: 20,
-                  offset: const Offset(0, -4),
-                ),
-              ],
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(child: Container(
-                    width: 36, height: 4,
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: scheme.onSurface.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  )),
-                  Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 16),
-                  ...children,
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
+    MxBottomSheet.show(context, title: title, children: children);
   }
 
   @override

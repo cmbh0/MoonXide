@@ -63,7 +63,30 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     await _save(state);
     try {
       final body = await AiApiClient().send(state.config, testController.text);
-      if (mounted) showDialog(context: context, builder: (_) => AlertDialog(title: const Text('测试响应'), content: SingleChildScrollView(child: SelectableText(body)), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))]));
+      if (mounted) {
+        MxBottomSheet.show(
+          context,
+          title: '测试响应',
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.45,
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  body,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            MxButton(
+              label: '关闭',
+              icon: Icons.close_rounded,
+              filled: false,
+              onPressed: () => Navigator.pop(context),
+            ),
+          ],
+        );
+      }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('测试失败：$e')));
     }
