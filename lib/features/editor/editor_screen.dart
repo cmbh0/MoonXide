@@ -360,11 +360,7 @@ $fileContent
                     icon: Icons.close_rounded,
                     onPressed: () => setState(() => showFind = false),
                     size: 36),
-              ],
-            ),
-          ),
-
-        // ── 代码编辑区 ────────────────────────────────────────────────────────
+// ── 代码编辑区 ────────────────────────────────────────────────────────
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -453,6 +449,9 @@ $fileContent
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
 
         if (editor.readOnly)
           Container(
