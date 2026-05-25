@@ -360,7 +360,11 @@ $fileContent
                     icon: Icons.close_rounded,
                     onPressed: () => setState(() => showFind = false),
                     size: 36),
-// ── 代码编辑区 ────────────────────────────────────────────────────────
+              ],
+            ),
+          ),
+
+        // ── 代码编辑区 ────────────────────────────────────────────────────────
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -389,7 +393,7 @@ $fileContent
                   ),
                 ),
               ),
-              
+
               // 代码区（横向可滚动 + 错误波浪线 overlay + 错误点击区域）
               Expanded(
                 child: Stack(
