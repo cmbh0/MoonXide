@@ -2,11 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../app/github_logo.dart';
-import '../../core/services/app_state.dart';
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../../app/github_logo.dart';
+import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 
 class TokenGateScreen extends StatefulWidget {
@@ -467,5 +463,4 @@ class _TokenGateScreenState extends State<TokenGateScreen> {
       ),
     );
   }
-}
 }
