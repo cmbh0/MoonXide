@@ -142,6 +142,7 @@ class EditorScreenState extends State<EditorScreen> {
   final contentController = _CodeController();
   final searchController  = TextEditingController();
   final replaceController = TextEditingController();
+  final lineJumpController = TextEditingController();
   final _editorScroll     = ScrollController();
   bool showFind = false;
 
@@ -161,6 +162,7 @@ class EditorScreenState extends State<EditorScreen> {
     contentController.dispose();
     searchController.dispose();
     replaceController.dispose();
+    lineJumpController.dispose();
     _editorScroll.dispose();
     super.dispose();
   }
@@ -300,6 +302,21 @@ class EditorScreenState extends State<EditorScreen> {
     if (_editorScroll.hasClients) {
       _editorScroll.animateTo((line * lineH).clamp(0.0, _editorScroll.position.maxScrollExtent), duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
     }
+  }
+
+  void _jumpToLine() {
+    final text = lineJumpController.text.trim();
+    if (text.isEmpty) return;
+    final line = int.tryParse(text);
+    if (line == null || line <= 0) return;
+    final lines = contentController.text.split('\n');
+    if (line > lines.length) return;
+    var offset = 0;
+    for (var i = 0; i < line - 1; i++) {
+      offset += lines[i].length + 1; // +1 is for '\n'
+    }
+    contentController.selection = TextSelection.collapsed(offset: offset);
+    _scrollToOffset(offset);
   }
 
   void _replace(EditorState editor) {
@@ -447,28 +464,55 @@ $fileContent
             color: (isDark ? const Color(0xFF0F2230) : Colors.white)
                 .withOpacity(0.95),
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                    child: MxTextField(
-                        controller: searchController, hint: '搜索')),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: MxTextField(
-                        controller: replaceController, hint: '替换为')),
-                const SizedBox(width: 6),
-                MxIconBtn(
-                    icon: Icons.search_rounded,
-                    onPressed: () => _find(editor),
-                    size: 36),
-                MxIconBtn(
-                    icon: Icons.find_replace_rounded,
-                    onPressed: () => _replace(editor),
-                    size: 36),
-                MxIconBtn(
-                    icon: Icons.close_rounded,
-                    onPressed: () => setState(() => showFind = false),
-                    size: 36),
+                Row(
+                  children: [
+                    Expanded(
+                        child: MxTextField(
+                            controller: searchController, hint: '搜索')),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: MxTextField(
+                            controller: replaceController, hint: '替换为')),
+                    const SizedBox(width: 6),
+                    MxIconBtn(
+                        icon: Icons.search_rounded,
+                        onPressed: () => _find(editor),
+                        size: 36),
+                    MxIconBtn(
+                        icon: Icons.find_replace_rounded,
+                        onPressed: () => _replace(editor),
+                        size: 36),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      child: MxTextField(
+                        controller: lineJumpController,
+                        hint: '跳转到行号',
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    MxButton(
+                      label: '跳转',
+                      icon: Icons.redo_rounded,
+                      small: true,
+                      filled: false,
+                      onPressed: _jumpToLine,
+                    ),
+                    const Spacer(),
+                    MxIconBtn(
+                        icon: Icons.close_rounded,
+                        onPressed: () => setState(() => showFind = false),
+                        size: 36),
+                  ],
+                ),
               ],
             ),
           ),
@@ -773,9 +817,10 @@ class _CodeController extends TextEditingController {
     notifyListeners();
   }
 
-  static final _kw = RegExp(r'\b(class|void|final|const|var|return|if|else|for|while|switch|case|break|continue|import|package|new|public|private|static|fun|val|def|async|await|try|catch|throw|extends|implements)\b');
-  static final _str = RegExp(r'''("[^"\n]*"|'[^'\n]*')''');
-  static final _comment = RegExp(r'(//.*|#.*)');
+  // 支持更多主流语言的语法高亮匹配
+  static final _kw = RegExp(r'\b(class|void|final|const|var|return|if|else|for|while|switch|case|break|continue|import|package|new|public|private|protected|static|fun|val|def|async|await|try|catch|throw|extends|implements|struct|enum|union|typedef|extern|register|volatile|inline|virtual|override|fn|let|mut|pub|use|mod|impl|trait|type|where|as|in|of|nil|undefined|null|true|false|bool|int|double|float|char|void|string|any|number|boolean|list|map|set)\b');
+  static final _str = RegExp(r'''("[^"\n]*"|'[^'\n]*'|`[^`]*`)''');
+  static final _comment = RegExp(r'(//.*|#.*|/\*[\s\S]*?\*/|--.*)');
 
   @override
   TextSpan buildTextSpan({required BuildContext context, TextStyle? style, required bool withComposing}) {

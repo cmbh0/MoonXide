@@ -216,8 +216,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     setState(() { _openingPath = node.path; _selectedPath = node.path; });
     try {
       final name = node.name.toLowerCase();
-      final binaryExt = ['png','jpg','jpeg','webp','gif','pdf','zip','apk','jar','so','a','dex','exe','bin','keystore','jks'];
       final ext = name.contains('.') ? name.split('.').last : '';
+      final binaryExt = ['png','jpg','jpeg','webp','gif','pdf','zip','apk','jar','so','a','dex','exe','bin','keystore','jks','exe','dll','sys','obj','lib','o','out','app','dmg','iso','tar','gz','bz2','7z','rar','tgz'];
       if (binaryExt.contains(ext)) {
         if (!mounted) return;
         context.read<EditorState>().openFile(node.path, '二进制/资源文件无法在文本编辑器中直接编辑。\n\n文件：${node.path}\n类型：$ext', readOnlyFile: true, reason: '二进制文件');
@@ -229,16 +229,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       final raw = (file['content'] as String).replaceAll('\n', '');
       final content = utf8.decode(base64Decode(raw), allowMalformed: true);
       if (!mounted) return;
-      if (size > 512 * 1024 || content.length > 600000) {
+      if (size > 1024 * 1024 || content.length > 1200000) {
         context.read<EditorState>().openFile(
           node.path,
-          '${content.substring(0, content.length > 120000 ? 120000 : content.length)}\n\n/* 大文件已截断预览，仅展示前 120KB */',
+          '${content.substring(0, content.length > 250000 ? 250000 : content.length)}\n\n/* 大文件已截断预览，仅展示前 250KB */',
           readOnlyFile: true,
           reason: '大文件预览模式',
         );
       } else {
         context.read<EditorState>().openFile(node.path, content);
       }
+      // 在打开/保存文件时，同步更新该文件的语法错误处理（此处由编辑器核心逻辑在 EditorScreen build 中更新 diagnostics 表现）
     } catch (e) {
       setState(() => _error = '打开失败：$e');
     }
@@ -863,7 +864,10 @@ class _FileGlyph extends StatelessWidget {
     'cpp': 'cplusplus', 'cc': 'cplusplus', 'cxx': 'cplusplus', 'hpp': 'cplusplus',
     'cs': 'csharp', 'rs': 'rust', 'go': 'go', 'swift': 'swift', 'rb': 'ruby',
     'php': 'php', 'lua': 'lua', 'r': 'r', 'html': 'html5', 'css': 'css3',
-    'vue': 'vuejs', 'svg': 'svg',
+    'vue': 'vuejs', 'svg': 'svg', 'md': 'markdown', 'json': 'json', 'yml': 'yaml',
+    'yaml': 'yaml', 'sh': 'bash', 'bash': 'bash', 'zsh': 'bash', 'bat': 'windows',
+    'cmd': 'windows', 'ps1': 'powershell', 'gradle': 'gradle', 'properties': 'java',
+    'xml': 'html5', 'toml': 'toml', 'sql': 'mysql', 'dockerfile': 'docker',
   };
 
   @override

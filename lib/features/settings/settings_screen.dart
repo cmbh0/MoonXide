@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 import '../ai_settings/ai_settings_screen.dart';
@@ -105,6 +106,74 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: _pickBackground, filled: false, small: true),
             ],
           ]),
+        ),
+
+        const MxSectionLabel('社区交流'),
+        _SettingRow(
+          icon: Icons.people_rounded,
+          title: '加入 QQ 交流群',
+          subtitle: '群内首发最新内测版与完整 APK 包',
+          onTap: () async {
+            const url = 'https://qun.qq.com/universal-share/share?ac=1&authKey=vkul2m0csA5sgX8g7PrwijmJRSGcwTfkKi8xlUaJlmnYMlChx%2FHvWvK6Z5GKFmU1&busi_data=eyJncm91cENvZGUiOiI5ODI5NzIzNzEiLCJ0b2tlbiI6Im9mN3RaYVJJTTNPTXViRVpZcHpleFVmeXZueWhpVDNJb2F4UEVGbTNmRWdRZTluUnFLeWVhQ3lET0NHTXNWN2oiLCJ1aW4iOiIzODQ1OTM5Njk4In0%3D&data=L4F0_h2IQmlj-POwzkQbm-YEIQWtcImAe5gL0Exbc2BNRFbf_ByAFCBCUbHspsq-yAU8ZGZpqhhB_8DZYB6y5w&svctype=4&tempid=h5_group_info';
+            final uri = Uri.parse(url);
+            if (await canLaunchUrl(uri)) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+          },
+        ),
+
+        const MxSectionLabel('关于 MoonXide'),
+        MxCard(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(children: [
+                Icon(Icons.info_outline_rounded, size: 16),
+                const SizedBox(width: 8),
+                Text('软件说明', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+              ]),
+              const SizedBox(height: 8),
+              const Text(
+                '本软件开发由开发者独立完成。\n'
+                '软件开发者：北海cmbh\n'
+                '软件开源协议：MIT',
+                style: TextStyle(fontSize: 12, height: 1.5),
+              ),
+              const SizedBox(height: 12),
+              MxButton(
+                label: 'GitHub 开源主页',
+                icon: Icons.code_rounded,
+                small: true,
+                filled: false,
+                onPressed: () async {
+                  final uri = Uri.parse('https://github.com/cmbh0/MoonXide/');
+                  if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+                },
+              ),
+              const SizedBox(height: 6),
+              MxButton(
+                label: '关注作者 B 站',
+                icon: Icons.video_library_rounded,
+                small: true,
+                filled: false,
+                onPressed: () async {
+                  final uri = Uri.parse('https://b23.tv/NHf4BNg');
+                  if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+                },
+              ),
+              const SizedBox(height: 10),
+              Divider(height: 1, thickness: 0.5, color: scheme.outlineVariant.withOpacity(0.4)),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('版本号', style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.55))),
+                  const Text('0.0.1', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ],
+          ),
         ),
 
         
