@@ -209,27 +209,6 @@ class AppState extends ChangeNotifier {
       return false;
     }
   }
-      tokenValidated = true;
-      tokenStatus = login == null ? 'Token 验证成功' : 'Token 验证成功：$login';
-      loading = false;
-      notifyListeners();
-      return true;
-    } on SocketException catch (e) {
-      tokenValidated = false;
-      tokenStatus = '已保存 Token，但当前无法连接 GitHub：${_friendlySocketMessage(e)}';
-      loading = false;
-      notifyListeners();
-      return false;
-    } catch (e) {
-      tokenValidated = false;
-      tokenStatus = null;
-      error = _formatTokenError(e);
-      loading = false;
-      notifyListeners();
-      return false;
-    }
-  }
-
   bool _isDnsFailure(SocketException e) {
     final message = e.message.toLowerCase();
     return e.osError?.errorCode == 7 || message.contains('failed host lookup') || message.contains('主机查找失败') || message.contains('no address associated');

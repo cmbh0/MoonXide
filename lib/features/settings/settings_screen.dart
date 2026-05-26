@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../app/github_logo.dart';
 import '../../app/mx_widgets.dart';
 import '../../core/services/app_state.dart';
 import '../ai_settings/ai_settings_screen.dart';
@@ -170,18 +171,10 @@ class _AboutDetailScreen extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 alignment: Alignment.center,
-                child: Image.network(
-                  'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/github/github-original.svg',
+                child: GitHubLogo(
                   width: 44,
                   height: 44,
                   color: isDark ? Colors.black : Colors.white,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Icon(
-                      Icons.logo_dev_rounded,
-                      color: isDark ? Colors.black : Colors.white,
-                      size: 40,
-                    );
-                  },
                 ),
               ),
             ),
