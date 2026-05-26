@@ -137,37 +137,35 @@ class MxDropdown<T> extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: (isDark ? const Color(0xFF0F2230) : Colors.white)
-            .withOpacity(isDark ? 0.65 : 0.85),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: scheme.primary.withOpacity(0.18)),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withOpacity(isDark ? 0.08 : 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        color: isDark ? const Color(0xFF161616) : const Color(0xFFF1F3F4),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<T>(
           value: value,
           hint: hint != null
               ? Text(hint!,
-                  style: TextStyle(color: scheme.onSurface.withOpacity(0.45)))
+                  style: TextStyle(color: scheme.onSurface.withOpacity(0.45), fontSize: 13))
               : null,
-          icon: Icon(Icons.expand_more_rounded, color: scheme.primary),
-          dropdownColor: isDark ? const Color(0xFF0F2230) : Colors.white,
+          icon: Icon(Icons.expand_more_rounded, color: scheme.onSurface.withOpacity(0.6)),
+          dropdownColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
           borderRadius: BorderRadius.circular(12),
           isExpanded: true,
+          style: TextStyle(color: scheme.onSurface, fontSize: 13),
           items: items
               .map((e) => DropdownMenuItem<T>(
                     value: e.value,
                     child: Row(children: [
-                      if (prefix != null) ...[prefix!, const SizedBox(width: 8)],
-                      Text(e.label, style: TextStyle(color: scheme.onSurface, fontWeight: FontWeight.w600)),
+                      if (e.icon != null) ...[
+                        Icon(e.icon, size: 16, color: scheme.primary),
+                        const SizedBox(width: 8)
+                      ] else if (prefix != null) ...[
+                        prefix!,
+                        const SizedBox(width: 8)
+                      ],
+                      Text(e.label, style: const TextStyle(fontWeight: FontWeight.w600)),
                     ]),
                   ))
               .toList(),

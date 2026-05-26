@@ -64,11 +64,16 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final _renameCtrl = TextEditingController();
   final _newFileCtrl = TextEditingController();
   final _newFolderCtrl = TextEditingController();
+  final _searchFilterCtrl = TextEditingController(); // 文件过滤控制器
   bool _private = true;
   bool _autoInit = true;
+
   @override
   void initState() {
     super.initState();
+    _searchFilterCtrl.addListener(() {
+      setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapWorkspace());
   }
 
@@ -89,9 +94,43 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     _renameCtrl.dispose();
     _newFileCtrl.dispose();
     _newFolderCtrl.dispose();
+    _searchFilterCtrl.dispose();
     _scrollH.dispose();
     _scrollV.dispose();
     super.dispose();
+  }
+
+  // 递归过滤节点，若节点包含关键字、或其任意子孙节点包含关键字，则保留
+  List<_TreeNode> _filterTree(List<_TreeNode> originalList, String keyword) {
+    if (keyword.isEmpty) return originalList;
+    final term = keyword.toLowerCase();
+    final List<_TreeNode> result = [];
+    for (final node in originalList) {
+      if (node.isDir) {
+        // 如果是目录，递归对其子节点进行过滤
+        final filteredChildren = _filterTree(node.children, keyword);
+        if (filteredChildren.isNotEmpty || node.name.toLowerCase().contains(term)) {
+          // 创建一份浅拷贝，确保不会污染静态缓存中的 tree node 状态
+          final clonedNode = _TreeNode(
+            name: node.name,
+            path: node.path,
+            isDir: true,
+            sha: node.sha,
+            downloadUrl: node.downloadUrl,
+            expanded: node.name.toLowerCase().contains(term) ? node.expanded : true, // 搜索到子孙时，默认自动展开
+            loading: node.loading,
+            selected: node.selected,
+            children: filteredChildren,
+          );
+          result.add(clonedNode);
+        }
+      } else {
+        if (node.name.toLowerCase().contains(term)) {
+          result.add(node);
+        }
+      }
+    }
+    return result;
   }
 
   Future<void> _bootstrapWorkspace() async {
@@ -608,6 +647,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final selected = widget.state.selectedRepo;
     final editorPath = context.watch<EditorState>().currentPath;
     final effectiveSelectedPath = editorPath.isNotEmpty ? editorPath : _selectedPath;
+    final filteredRoots = _filterTree(_roots, _searchFilterCtrl.text.trim());
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -617,13 +657,44 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           selected: selected,
           loading: _loadingRepos,
           onSelect: (r) => _selectRepo(r['owner']['login'] as String, r['name'] as String),
-          onRefresh: () async { _treeCache.clear(); await _fetchRepos(force: true); if (selected != null && selected.isNotEmpty) await _fetchTree('', force: true); },
+          onRefresh: () async { _treeCache.clear(); _searchFilterCtrl.clear(); await _fetchRepos(force: true); if (selected != null && selected.isNotEmpty) await _fetchTree('', force: true); },
           onNew: _showCreateSheet,
           onUpload: _upload,
           onNewItem: () => _showNewItemSheet(),
           onManage: _showManageSheet,
           canManage: selected != null && selected.isNotEmpty,
         ),
+        if (selected != null && selected.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Container(
+              height: 36,
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF161616) : const Color(0xFFF1F3F4),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: TextField(
+                controller: _searchFilterCtrl,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: '搜索文件或文件夹...',
+                  hintStyle: TextStyle(color: scheme.onSurface.withOpacity(0.4), fontSize: 13),
+                  prefixIcon: Icon(Icons.search_rounded, size: 16, color: scheme.onSurface.withOpacity(0.5)),
+                  suffixIcon: _searchFilterCtrl.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 16),
+                          onPressed: () => _searchFilterCtrl.clear(),
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+          ),
         if (_error != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
@@ -633,8 +704,11 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         Expanded(
           child: selected == null || selected.isEmpty
               ? const MxEmpty(icon: Icons.folder_off_rounded, label: '未选择仓库', hint: '从上方选择、创建或管理 GitHub 仓库')
-              : _roots.isEmpty && !_loadingTree
-                  ? const MxEmpty(icon: Icons.description_outlined, label: '仓库为空', hint: '上传文件或等待初始化')
+              : filteredRoots.isEmpty && !_loadingTree
+                  ? MxEmpty(
+                      icon: _searchFilterCtrl.text.isNotEmpty ? Icons.search_off_rounded : Icons.description_outlined,
+                      label: _searchFilterCtrl.text.isNotEmpty ? '未搜到相关文件' : '仓库为空',
+                      hint: _searchFilterCtrl.text.isNotEmpty ? '请尝试更换搜索关键字' : '上传文件或等待初始化')
                   : Scrollbar(
                       controller: _scrollV,
                       child: SingleChildScrollView(
@@ -651,9 +725,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                                 shrinkWrap: true,
                                 physics: const NeverScrollableScrollPhysics(),
                                 padding: const EdgeInsets.only(bottom: 24),
-                                itemCount: _roots.length,
+                                itemCount: filteredRoots.length,
                                 itemBuilder: (_, i) => _TreeTile(
-                                  node: _roots[i],
+                                  node: filteredRoots[i],
                                   depth: 0,
                                   onToggle: _toggleDir,
                                   onOpen: _openFile,
@@ -747,9 +821,9 @@ class _CompactRepoSelector extends StatelessWidget {
     return PopupMenuButton<String>(
       tooltip: '选择仓库',
       offset: const Offset(0, 32),
-      color: isDark ? const Color(0xFF0A1C2C) : Colors.white,
+      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         side: BorderSide(color: isDark
             ? Colors.white.withOpacity(0.08)
             : Colors.black.withOpacity(0.06)),
@@ -783,11 +857,8 @@ class _CompactRepoSelector extends StatelessWidget {
         height: 26,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: isDark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.04),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: isDark
-              ? Colors.white.withOpacity(0.10)
-              : Colors.black.withOpacity(0.08)),
+          color: isDark ? const Color(0xFF161616) : const Color(0xFFF1F3F4),
+          borderRadius: BorderRadius.circular(6),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(
@@ -796,7 +867,7 @@ class _CompactRepoSelector extends StatelessWidget {
             size: 12,
             color: current == null
                 ? scheme.onSurface.withOpacity(0.3)
-                : scheme.primary,
+                : (isDark ? Colors.white : Colors.black),
           ),
           const SizedBox(width: 5),
           Flexible(
@@ -805,16 +876,16 @@ class _CompactRepoSelector extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
                   color: current == null
                       ? scheme.onSurface.withOpacity(0.4)
-                      : scheme.onSurface.withOpacity(0.85)),
+                      : (isDark ? Colors.white : Colors.black)),
             ),
           ),
           const SizedBox(width: 3),
           Icon(Icons.expand_more_rounded, size: 13,
-              color: scheme.onSurface.withOpacity(0.4)),
+              color: isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.4)),
         ]),
       ),
     );
@@ -872,6 +943,7 @@ class _FileGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final key = ext == null ? null : _devicon[ext!.toLowerCase()];
     if (key != null) {
       return SizedBox(
@@ -880,6 +952,9 @@ class _FileGlyph extends StatelessWidget {
         child: SvgPicture.network(
           'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/$key/$key-original.svg',
           placeholderBuilder: (_) => Icon(icon, size: 15, color: color),
+          colorFilter: (key == 'github' || ext?.toLowerCase() == 'github')
+              ? ColorFilter.mode(isDark ? Colors.white : Colors.black, BlendMode.srcIn)
+              : null,
         ),
       );
     }

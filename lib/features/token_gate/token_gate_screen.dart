@@ -73,11 +73,11 @@ class _TokenGateScreenState extends State<TokenGateScreen> {
                     'https://cdn.jsdelivr.net/gh/devicons/devicon/icons/github/github-original.svg',
                     width: 44,
                     height: 44,
-                    color: isDark ? Colors.black : Colors.white,
+                    color: isDark ? Colors.white : Colors.black,
                     errorBuilder: (context, error, stackTrace) {
                       return Icon(
                         Icons.logo_dev_rounded,
-                        color: isDark ? Colors.black : Colors.white,
+                        color: isDark ? Colors.white : Colors.black,
                         size: 40,
                       );
                     },
