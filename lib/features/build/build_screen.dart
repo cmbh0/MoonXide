@@ -22,9 +22,29 @@ class BuildScreen extends StatelessWidget {
       return;
     }
     try {
+      if (state.buildProfile == BuildProfile.customWorkflow) {
+        final workflow = state.customWorkflowFile;
+        if (workflow == null || workflow.isEmpty) {
+          build.setStatus('请先在下方选择一个项目内工作流');
+          return;
+        }
+        await state.github!.dispatchWorkflow(
+          owner: owner,
+          repo: repo,
+          workflowFile: workflow,
+          ref: state.workflowRef,
+          inputs: const {},
+          isDefaultWorkflow: true,
+        );
+        build.start('正在触发自定义工作流 $workflow…', owner: owner, repo: repo, workflow: workflow);
+        build.updateProgress(statusText: '已触发 $workflow，正在轮询进度…', value: 0.12);
+        return;
+      }
+
       final isDefault = state.buildProfile == BuildProfile.workflowDefault;
       final workflow = await state.github!.dispatchBestBuildWorkflow(
         owner: owner, repo: repo,
+        ref: state.workflowRef,
         isDefaultWorkflow: isDefault,
         inputs: isDefault ? {} : {
           'build_type':      state.buildProfile == BuildProfile.debug ? 'debug' : 'release',
@@ -130,7 +150,7 @@ class BuildScreen extends StatelessWidget {
           if (!await logsDir.exists()) await logsDir.create(recursive: true);
           final logFile = File('${logsDir.path}/run_$runId.zip');
           await logFile.writeAsBytes(bytes);
-          final summary = LogParser().summarize(String.fromCharCodes(bytes));
+          final summary = LogParser().summarizeBytes(bytes);
           build.setLog(summary, filePath: logFile.path);
         } catch (e) {
           build.setLog('获取日志失败: $e');
@@ -196,31 +216,50 @@ class BuildScreen extends StatelessWidget {
       children: [
         const MxSectionLabel('构建类型'),
         MxCard(
-          child: Row(
+          child: Column(
             children: [
-              _ProfileChip(
-                label: 'Debug',
-                icon: Icons.bug_report_rounded,
-                active: state.buildProfile == BuildProfile.debug,
-                onTap: () => state.setBuildProfile(BuildProfile.debug),
+              Row(
+                children: [
+                  _ProfileChip(
+                    label: 'Debug',
+                    icon: Icons.bug_report_rounded,
+                    active: state.buildProfile == BuildProfile.debug,
+                    onTap: () => state.setBuildProfile(BuildProfile.debug),
+                  ),
+                  const SizedBox(width: 10),
+                  _ProfileChip(
+                    label: 'Release',
+                    icon: Icons.rocket_launch_rounded,
+                    active: state.buildProfile == BuildProfile.release,
+                    onTap: () => state.setBuildProfile(BuildProfile.release),
+                  ),
+                ],
               ),
-              const SizedBox(width: 10),
-              _ProfileChip(
-                label: 'Release',
-                icon: Icons.rocket_launch_rounded,
-                active: state.buildProfile == BuildProfile.release,
-                onTap: () => state.setBuildProfile(BuildProfile.release),
-              ),
-              const SizedBox(width: 10),
-              _ProfileChip(
-                label: '工作流默认',
-                icon: Icons.settings_backup_restore_rounded,
-                active: state.buildProfile == BuildProfile.workflowDefault,
-                onTap: () => state.setBuildProfile(BuildProfile.workflowDefault),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  _ProfileChip(
+                    label: '默认工作流',
+                    icon: Icons.settings_backup_restore_rounded,
+                    active: state.buildProfile == BuildProfile.workflowDefault,
+                    onTap: () => state.setBuildProfile(BuildProfile.workflowDefault),
+                  ),
+                  const SizedBox(width: 10),
+                  _ProfileChip(
+                    label: '自定义',
+                    icon: Icons.account_tree_rounded,
+                    active: state.buildProfile == BuildProfile.customWorkflow,
+                    onTap: () => state.setBuildProfile(BuildProfile.customWorkflow),
+                  ),
+                ],
               ),
             ],
           ),
         ),
+        if (state.buildProfile == BuildProfile.customWorkflow) ...[
+          const MxSectionLabel('自定义工作流'),
+          _CustomWorkflowCard(state: state),
+        ],
         const MxSectionLabel('操作'),
         MxActionRow(children: [
           MxButton(label: '触发编译', icon: Icons.play_arrow_rounded, onPressed: () => _trigger(context)),
@@ -311,6 +350,131 @@ class BuildScreen extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _CustomWorkflowCard extends StatefulWidget {
+  const _CustomWorkflowCard({required this.state});
+  final AppState state;
+
+  @override
+  State<_CustomWorkflowCard> createState() => _CustomWorkflowCardState();
+}
+
+class _CustomWorkflowCardState extends State<_CustomWorkflowCard> {
+  bool _loading = false;
+  String? _error;
+  List<Map<String, dynamic>> _workflows = const [];
+  late final TextEditingController _refCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _refCtrl = TextEditingController(text: widget.state.workflowRef);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadWorkflows());
+  }
+
+  @override
+  void dispose() {
+    _refCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadWorkflows() async {
+    final owner = widget.state.selectedOwner;
+    final repo = widget.state.selectedRepo;
+    final github = widget.state.github;
+    if (owner == null || repo == null || github == null) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final apiWorkflows = await github.listWorkflows(owner, repo);
+      final fileWorkflows = await github.listWorkflowFiles(owner, repo);
+      final merged = <String, Map<String, dynamic>>{};
+      for (final w in fileWorkflows) {
+        final id = _workflowId(w);
+        if (id.isNotEmpty) merged[id] = w;
+      }
+      for (final w in apiWorkflows) {
+        final id = _workflowId(w);
+        if (id.isNotEmpty) merged[id] = w;
+      }
+      final workflows = merged.values.toList()
+        ..sort((a, b) => _workflowLabel(a).toLowerCase().compareTo(_workflowLabel(b).toLowerCase()));
+      if (!mounted) return;
+      _workflows = workflows;
+      final selected = widget.state.customWorkflowFile;
+      final hasSelected = selected != null && workflows.any((w) => _workflowId(w) == selected);
+      if (!hasSelected && workflows.isNotEmpty) {
+        await widget.state.setCustomWorkflowFile(_workflowId(workflows.first));
+      }
+    } catch (e) {
+      _error = '工作流加载失败：$e';
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _workflowId(Map<String, dynamic> workflow) {
+    final path = workflow['path']?.toString();
+    if (path != null && path.isNotEmpty) return path.split('/').last;
+    return workflow['id']?.toString() ?? workflow['name']?.toString() ?? '';
+  }
+
+  String _workflowLabel(Map<String, dynamic> workflow) {
+    final name = workflow['name']?.toString() ?? '未命名工作流';
+    final path = workflow['path']?.toString() ?? _workflowId(workflow);
+    return '$name · $path';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = widget.state.customWorkflowFile;
+    final selectedValue = selected != null && _workflows.any((w) => _workflowId(w) == selected)
+        ? selected
+        : null;
+    return MxCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.account_tree_rounded, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('选择项目内 workflow_dispatch 工作流', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900))),
+          MxIconBtn(icon: Icons.refresh_rounded, size: 30, onPressed: _loading ? null : _loadWorkflows),
+        ]),
+        const SizedBox(height: 10),
+        if (_loading) const LinearProgressIndicator(minHeight: 2),
+        if (_workflows.isEmpty && !_loading)
+          Text('没有读取到工作流。请确认仓库包含 .github/workflows/*.yml 且 Token 有 workflow 权限。',
+              style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.58)))
+        else
+          MxDropdown<String>(
+            value: selectedValue,
+            hint: '选择工作流文件',
+            items: _workflows
+                .map((w) => MxDropdownItem<String>(
+                      value: _workflowId(w),
+                      label: _workflowLabel(w),
+                      icon: Icons.playlist_add_check_rounded,
+                    ))
+                .toList(),
+            onChanged: widget.state.setCustomWorkflowFile,
+          ),
+        const SizedBox(height: 10),
+        MxTextField(
+          controller: _refCtrl,
+          label: '触发分支 / ref',
+          hint: 'main、master 或指定分支名',
+          prefix: const Icon(Icons.call_split_rounded, size: 17),
+          onChanged: widget.state.setWorkflowRef,
+        ),
+        const SizedBox(height: 8),
+        Text('提示：自定义触发会按工作流默认输入执行；若工作流需要必填 inputs，请先在工作流中提供默认值。',
+            style: TextStyle(fontSize: 11, height: 1.4, color: scheme.onSurface.withOpacity(0.50))),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: const TextStyle(fontSize: 11, color: Colors.red)),
+        ],
+      ]),
     );
   }
 }

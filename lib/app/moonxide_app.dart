@@ -10,12 +10,14 @@ class MoonXideApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeMode = context.select<AppState, ThemeMode>((state) => state.themeMode);
+    final themeVariant = context.select<AppState, String>((state) => state.themeVariant);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'MoonXide',
-      theme: MoonXideTheme.light(),
-      darkTheme: MoonXideTheme.dark(),
-      themeMode: ThemeMode.system,
+      theme: MoonXideTheme.light(themeVariant),
+      darkTheme: MoonXideTheme.dark(themeVariant),
+      themeMode: themeMode,
       builder: (ctx, child) => _AppErrorBoundary(child: child ?? const SizedBox.shrink()),
       home: const _AppRouter(),
     );

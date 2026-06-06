@@ -170,7 +170,7 @@ Future<void> _pollBuild(AppState state, BuildCenterState build) async {
           if (!await logsDir.exists()) await logsDir.create(recursive: true);
           final logFile = File('${logsDir.path}/run_$runId.zip');
           await logFile.writeAsBytes(bytes);
-          final summary = LogParser().summarize(String.fromCharCodes(bytes));
+          final summary = LogParser().summarizeBytes(bytes);
           build.setLog(summary, filePath: logFile.path);
           
           if (mounted) {

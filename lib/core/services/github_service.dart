@@ -103,12 +103,32 @@ class GithubService {
 
   Future<void> dispatchWorkflow({required String owner, required String repo, required String workflowFile, String ref = 'main', required Map<String, dynamic> inputs, bool isDefaultWorkflow = false}) async {
     final body = isDefaultWorkflow ? {'ref': ref} : {'ref': ref, 'inputs': inputs};
-    await _request('POST', '/repos/$owner/$repo/actions/workflows/$workflowFile/dispatches', body: body);
+    await _request('POST', '/repos/$owner/$repo/actions/workflows/${Uri.encodeComponent(workflowFile)}/dispatches', body: body);
   }
 
   Future<List<Map<String, dynamic>>> listWorkflows(String owner, String repo) async {
     final data = await _request('GET', '/repos/$owner/$repo/actions/workflows');
     return List<Map<String, dynamic>>.from(data['workflows'] as List);
+  }
+
+  Future<List<Map<String, dynamic>>> listWorkflowFiles(String owner, String repo) async {
+    try {
+      final files = await getContents(owner, repo, path: '.github/workflows');
+      return files
+          .where((f) {
+            final name = f['name']?.toString().toLowerCase() ?? '';
+            return f['type'] == 'file' && (name.endsWith('.yml') || name.endsWith('.yaml'));
+          })
+          .map((f) => {
+                'id': f['name'],
+                'name': f['name'],
+                'path': f['path'],
+                'state': 'discovered',
+              })
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<String> dispatchBestBuildWorkflow({required String owner, required String repo, String ref = 'main', required Map<String, dynamic> inputs, bool isDefaultWorkflow = false}) async {

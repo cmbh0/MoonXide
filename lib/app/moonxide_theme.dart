@@ -7,14 +7,56 @@ class MoonXideTheme {
   static const Color alpineBlue = Color(0xFF5BA7D8);
   static const Color deepBlue = Color(0xFF16496B);
 
-  static ThemeData light() {
+  static Color _seed(String variant) {
+    switch (variant) {
+      case 'forest':
+        return const Color(0xFF32B67A);
+      case 'violet':
+        return const Color(0xFF8B6DFF);
+      case 'sunset':
+        return const Color(0xFFFF8A65);
+      case 'arctic':
+      default:
+        return alpineBlue;
+    }
+  }
+
+  static Color _primary(String variant, Brightness brightness) {
+    if (brightness == Brightness.dark) {
+      switch (variant) {
+        case 'forest':
+          return const Color(0xFF7FE3B0);
+        case 'violet':
+          return const Color(0xFFC1B5FF);
+        case 'sunset':
+          return const Color(0xFFFFB199);
+        case 'arctic':
+        default:
+          return const Color(0xFF8ED8FF);
+      }
+    }
+    switch (variant) {
+      case 'forest':
+        return const Color(0xFF16885A);
+      case 'violet':
+        return const Color(0xFF6652D9);
+      case 'sunset':
+        return const Color(0xFFE66745);
+      case 'arctic':
+      default:
+        return const Color(0xFF2F8CCB);
+    }
+  }
+
+  static ThemeData light([String variant = 'arctic']) {
+    final primary = _primary(variant, Brightness.light);
     final scheme = ColorScheme.fromSeed(
-      seedColor: alpineBlue,
+      seedColor: _seed(variant),
       brightness: Brightness.light,
-      primary: const Color(0xFF2F8CCB),
-      secondary: const Color(0xFF7BC7E8),
+      primary: primary,
+      secondary: Color.lerp(primary, Colors.white, 0.38)!,
       surface: const Color(0xF8FFFFFF),
-      surfaceContainerHighest: const Color(0xFFEFF8FF),
+      surfaceContainerHighest: Color.lerp(primary, Colors.white, 0.90)!,
     );
     return _base(scheme).copyWith(
       brightness: Brightness.light,
@@ -36,14 +78,15 @@ class MoonXideTheme {
     );
   }
 
-  static ThemeData dark() {
+  static ThemeData dark([String variant = 'arctic']) {
+    final primary = _primary(variant, Brightness.dark);
     final scheme = ColorScheme.fromSeed(
-      seedColor: alpineBlue,
+      seedColor: _seed(variant),
       brightness: Brightness.dark,
-      primary: const Color(0xFF8ED8FF),
-      secondary: const Color(0xFFB8E8FF),
+      primary: primary,
+      secondary: Color.lerp(primary, Colors.white, 0.25)!,
       surface: const Color(0xFF0F2230),
-      surfaceContainerHighest: const Color(0xFF1A3345),
+      surfaceContainerHighest: Color.lerp(const Color(0xFF1A3345), primary, 0.16)!,
     );
     return _base(scheme).copyWith(
       brightness: Brightness.dark,

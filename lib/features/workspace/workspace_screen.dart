@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -43,6 +44,8 @@ class WorkspaceScreen extends StatefulWidget {
 class _WorkspaceScreenState extends State<WorkspaceScreen> {
   static List<Map<String, dynamic>> _cachedRepos = [];
   static final Map<String, List<_TreeNode>> _cachedTree = {};
+  static final Map<String, DateTime> _cacheTouched = {};
+  static const Duration _treeCacheTtl = Duration(minutes: 10);
   static String? _cachedRepoKey;
   static final Map<String, String> _selectedPathByRepo = {};
 
@@ -70,29 +73,34 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   // 高级搜索状态与被过滤出来的扁平节点列表
   bool _isAdvancedSearching = false;
+  Timer? _searchDebounce;
   List<_TreeNode> _advancedFilteredRoots = [];
 
   @override
   void initState() {
     super.initState();
     _searchFilterCtrl.addListener(() {
-      final text = _searchFilterCtrl.text.trim();
-      if (text.toLowerCase().startsWith('content:')) {
-        final query = text.substring(8).trim().toLowerCase();
-        if (query.isNotEmpty) {
-          _triggerAdvancedSearch(query);
+      _searchDebounce?.cancel();
+      _searchDebounce = Timer(const Duration(milliseconds: 260), () {
+        if (!mounted) return;
+        final text = _searchFilterCtrl.text.trim();
+        if (text.toLowerCase().startsWith('content:')) {
+          final query = text.substring(8).trim().toLowerCase();
+          if (query.isNotEmpty) {
+            _triggerAdvancedSearch(query);
+          } else {
+            setState(() {
+              _isAdvancedSearching = false;
+              _advancedFilteredRoots = [];
+            });
+          }
         } else {
           setState(() {
             _isAdvancedSearching = false;
             _advancedFilteredRoots = [];
           });
         }
-      } else {
-        setState(() {
-          _isAdvancedSearching = false;
-          _advancedFilteredRoots = [];
-        });
-      }
+      });
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapWorkspace());
   }
@@ -176,6 +184,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _renameCtrl.dispose();
@@ -263,6 +272,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         _roots = _treeCache['']!;
         _selectedPath = _selectedPathByRepo[key];
       });
+      if (_hasFreshTreeCache('')) return;
+      await _fetchTree('', background: true);
       return;
     }
     setState(() { _roots = []; _selectedPath = _selectedPathByRepo[key]; });
@@ -271,27 +282,45 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     await _fetchTree('', force: false);
   }
 
-  Future<void> _fetchTree(String path, {bool force = false}) async {
+  bool _hasFreshTreeCache(String path) {
+    final touched = _cacheTouched[path];
+    return touched != null && DateTime.now().difference(touched) < _treeCacheTtl;
+  }
+
+  void _rememberTreeCache(String path, List<_TreeNode> nodes) {
+    _treeCache[path] = nodes;
+    _cacheTouched[path] = DateTime.now();
+  }
+
+  void _clearTreeCache() {
+    _treeCache.clear();
+    _cachedTree.clear();
+    _cacheTouched.clear();
+  }
+
+  Future<void> _fetchTree(String path, {bool force = false, bool background = false}) async {
     final owner = widget.state.selectedOwner;
     final repo = widget.state.selectedRepo;
     if (owner == null || repo == null || widget.state.github == null) return;
     final repoKey = '$owner/$repo';
     if (_loadedRepoKey != repoKey) {
-      _treeCache.clear();
-      _cachedTree.clear();
+      _clearTreeCache();
       _loadedRepoKey = repoKey;
       _cachedRepoKey = repoKey;
     }
-    if (!force && _treeCache.containsKey(path)) {
+    final cached = _treeCache[path];
+    if (!force && cached != null) {
       if (path.isEmpty) {
-        setState(() => _roots = _treeCache[path]!);
+        setState(() => _roots = cached);
       } else {
-        _insertChildren(_roots, path, _treeCache[path]!);
+        _insertChildren(_roots, path, cached);
         setState(() {});
       }
-      return;
+      // Fresh cache: no network call. Stale cache: render instantly and silently refresh.
+      if (_hasFreshTreeCache(path)) return;
+      background = true;
     }
-    setState(() { _loadingTree = true; _error = null; });
+    if (!background) setState(() { _loadingTree = true; _error = null; });
     try {
       final data = await widget.state.github!.getContents(owner, repo, path: path);
       final nodes = data.map((e) => _TreeNode(
@@ -310,11 +339,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       } else {
         _insertChildren(_roots, path, nodes);
       }
-      _treeCache[path] = nodes;
+      _rememberTreeCache(path, nodes);
     } catch (e) {
-      _error = '文件树加载失败：$e';
+      if (!background) _error = '文件树加载失败：$e';
     }
-    if (mounted) setState(() => _loadingTree = false);
+    if (mounted && !background) setState(() => _loadingTree = false);
+    if (mounted && background) setState(() {});
   }
 
   void _insertChildren(List<_TreeNode> nodes, String path, List<_TreeNode> children) {
@@ -465,7 +495,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       await widget.state.github!.deleteRepository(owner, repo);
       widget.state.clearRepositorySelection();
       setState(() => _roots = []);
-      _treeCache.clear();
+      _clearTreeCache();
       await _fetchRepos(force: true);
       await _safePopOverlay();
     } catch (e) {
@@ -481,8 +511,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   }
 
   Future<void> _invalidateAndRefresh([String path = '']) async {
-    _treeCache.clear();
-    _cachedTree.clear();
+    _clearTreeCache();
     await _fetchTree(path, force: true);
   }
 
@@ -740,7 +769,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final selected = widget.state.selectedRepo;
-    final editorPath = context.watch<EditorState>().currentPath;
+    final editor = context.watch<EditorState>();
+    final editorPath = editor.currentPath;
+    final dirtyPaths = editor.dirtyFiles.keys.toSet();
     final effectiveSelectedPath = editorPath.isNotEmpty ? editorPath : _selectedPath;
     final filteredRoots = _filterTree(_roots, _searchFilterCtrl.text.trim());
 
@@ -752,7 +783,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           selected: selected,
           loading: _loadingRepos,
           onSelect: (r) => _selectRepo(r['owner']['login'] as String, r['name'] as String),
-          onRefresh: () async { _treeCache.clear(); _searchFilterCtrl.clear(); await _fetchRepos(force: true); if (selected != null && selected.isNotEmpty) await _fetchTree('', force: true); },
+          onRefresh: () async { _clearTreeCache(); _searchFilterCtrl.clear(); await _fetchRepos(force: true); if (selected != null && selected.isNotEmpty) await _fetchTree('', force: true); },
           onNew: _showCreateSheet,
           onUpload: _upload,
           onNewItem: () => _showNewItemSheet(),
@@ -781,32 +812,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                     ),
                   ),
                 Expanded(
-                  child: Container(
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF161616) : const Color(0xFFF1F3F4),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: TextField(
-                      controller: _searchFilterCtrl,
-                      style: const TextStyle(fontSize: 13),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        hintText: '搜索文件，或 content:内容 搜索内容',
-                        hintStyle: TextStyle(color: scheme.onSurface.withOpacity(0.4), fontSize: 11),
-                        prefixIcon: Icon(Icons.search_rounded, size: 16, color: scheme.onSurface.withOpacity(0.5)),
-                        suffixIcon: _searchFilterCtrl.text.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear_rounded, size: 16),
-                                onPressed: () => _searchFilterCtrl.clear(),
-                              )
-                            : null,
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                    ),
+                  child: _WorkspaceSearchBox(
+                    controller: _searchFilterCtrl,
+                    active: _searchFilterCtrl.text.isNotEmpty,
+                    advanced: _isAdvancedSearching,
+                    isDark: isDark,
+                    scheme: scheme,
                   ),
                 ),
               ],
@@ -853,6 +864,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                                   selectedPath: effectiveSelectedPath,
                                   openingPath: _openingPath,
                                   onLongPress: _showFileMenu,
+                              dirtyPaths: dirtyPaths,
                                 ),
                               ),
                             ),
@@ -862,6 +874,79 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                     ),
         ),
       ],
+    );
+  }
+}
+
+class _WorkspaceSearchBox extends StatefulWidget {
+  const _WorkspaceSearchBox({
+    required this.controller,
+    required this.active,
+    required this.advanced,
+    required this.isDark,
+    required this.scheme,
+  });
+
+  final TextEditingController controller;
+  final bool active;
+  final bool advanced;
+  final bool isDark;
+  final ColorScheme scheme;
+
+  @override
+  State<_WorkspaceSearchBox> createState() => _WorkspaceSearchBoxState();
+}
+
+class _WorkspaceSearchBoxState extends State<_WorkspaceSearchBox> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = widget.scheme;
+    final active = widget.active || _focused || widget.advanced;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      height: 38,
+      decoration: BoxDecoration(
+        color: widget.isDark ? const Color(0xFF0F2230).withOpacity(0.86) : Colors.white.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(active ? 14 : 10),
+        border: Border.all(color: active ? scheme.primary.withOpacity(0.48) : scheme.outlineVariant.withOpacity(0.28), width: active ? 1.2 : 1),
+        boxShadow: active
+            ? [BoxShadow(color: scheme.primary.withOpacity(widget.isDark ? 0.16 : 0.10), blurRadius: 14, offset: const Offset(0, 4))]
+            : null,
+      ),
+      child: Focus(
+        onFocusChange: (v) => setState(() => _focused = v),
+        child: TextField(
+          controller: widget.controller,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: widget.advanced ? '正在搜索内容…' : '搜索文件 / content:全文搜索',
+            hintStyle: TextStyle(color: scheme.onSurface.withOpacity(0.38), fontSize: 12),
+            prefixIcon: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              child: Icon(
+                widget.advanced ? Icons.manage_search_rounded : Icons.search_rounded,
+                key: ValueKey(widget.advanced),
+                size: 18,
+                color: active ? scheme.primary : scheme.onSurface.withOpacity(0.48),
+              ),
+            ),
+            suffixIcon: widget.controller.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 16),
+                    onPressed: () => widget.controller.clear(),
+                  )
+                : null,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1022,7 +1107,7 @@ class _SwitchRow extends StatelessWidget {
 }
 
 class _TreeTile extends StatefulWidget {
-  const _TreeTile({required this.node, required this.depth, required this.onToggle, required this.onOpen, required this.scheme, required this.isDark, required this.selectedPath, required this.openingPath, required this.onLongPress});
+  const _TreeTile({required this.node, required this.depth, required this.onToggle, required this.onOpen, required this.scheme, required this.isDark, required this.selectedPath, required this.openingPath, required this.onLongPress, required this.dirtyPaths});
   final _TreeNode node;
   final int depth;
   final Future<void> Function(_TreeNode) onToggle;
@@ -1032,6 +1117,7 @@ class _TreeTile extends StatefulWidget {
   final String? selectedPath;
   final String? openingPath;
   final void Function(_TreeNode) onLongPress;
+  final Set<String> dirtyPaths;
 
   @override
   State<_TreeTile> createState() => _TreeTileState();
@@ -1327,6 +1413,7 @@ class _TreeTileState extends State<_TreeTile> {
     final indent = 10.0 + widget.depth * 15.0;
     final isSelected = widget.selectedPath == node.path;
     final isOpening  = widget.openingPath  == node.path;
+    final isDirty = !node.isDir && widget.dirtyPaths.contains(node.path);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       AnimatedContainer(
@@ -1368,10 +1455,26 @@ class _TreeTileState extends State<_TreeTile> {
               const SizedBox(width: 6),
               Expanded(child: Text(node.name, maxLines: 1, overflow: TextOverflow.visible,
                   style: TextStyle(fontSize: 13,
-                      fontWeight: node.isDir ? FontWeight.w600 : FontWeight.w400,
+                      fontWeight: isDirty || node.isDir ? FontWeight.w700 : FontWeight.w400,
                       color: isSelected
                           ? scheme.primary
                           : scheme.onSurface.withOpacity(0.85)))),
+              if (isDirty) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: '未保存修改',
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      shape: BoxShape.circle,
+                      boxShadow: [BoxShadow(color: scheme.primary.withOpacity(0.35), blurRadius: 8)],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
             ]),
           ),
         ),
@@ -1384,6 +1487,7 @@ class _TreeTileState extends State<_TreeTile> {
           selectedPath: widget.selectedPath,
           openingPath: widget.openingPath,
           onLongPress: widget.onLongPress,
+          dirtyPaths: widget.dirtyPaths,
         )),
     ]);
   }

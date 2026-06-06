@@ -68,6 +68,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SigningScreen())),
         ),
 
+        const MxSectionLabel('外观'),
+        MxCard(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.palette_rounded, color: scheme.primary, size: 18),
+                const SizedBox(width: 10),
+                const Expanded(child: Text('主题模式', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13))),
+              ]),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _ThemeChoice(label: '跟随系统', icon: Icons.brightness_auto_rounded, value: ThemeMode.system, state: widget.state),
+                  _ThemeChoice(label: '浅色', icon: Icons.light_mode_rounded, value: ThemeMode.light, state: widget.state),
+                  _ThemeChoice(label: '深色', icon: Icons.dark_mode_rounded, value: ThemeMode.dark, state: widget.state),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text('主题配色', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: scheme.onSurface.withOpacity(0.62))),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _ThemeVariantChoice(label: '冰川蓝', value: 'arctic', color: const Color(0xFF2F8CCB), state: widget.state),
+                  _ThemeVariantChoice(label: '森林绿', value: 'forest', color: const Color(0xFF16885A), state: widget.state),
+                  _ThemeVariantChoice(label: '紫罗兰', value: 'violet', color: const Color(0xFF6652D9), state: widget.state),
+                  _ThemeVariantChoice(label: '落日橙', value: 'sunset', color: const Color(0xFFE66745), state: widget.state),
+                ],
+              ),
+            ]),
+          ),
+        ),
+
         const MxSectionLabel('背景个性化'),
         MxCard(
           child: Padding(
@@ -142,6 +179,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
           },
         ),
       ],
+    );
+  }
+}
+
+class _ThemeChoice extends StatelessWidget {
+  const _ThemeChoice({
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.state,
+  });
+
+  final String label;
+  final IconData icon;
+  final ThemeMode value;
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = state.themeMode == value;
+    return ChoiceChip(
+      selected: selected,
+      avatar: Icon(icon, size: 15, color: selected ? scheme.onPrimary : scheme.primary),
+      label: Text(label),
+      onSelected: (_) => state.setThemeMode(value),
+      selectedColor: scheme.primary,
+      labelStyle: TextStyle(
+        color: selected ? scheme.onPrimary : scheme.onSurface,
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+    );
+  }
+}
+
+class _ThemeVariantChoice extends StatelessWidget {
+  const _ThemeVariantChoice({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.state,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = state.themeVariant == value;
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: () => state.setThemeVariant(value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? color.withOpacity(0.16) : scheme.onSurface.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: selected ? color.withOpacity(0.62) : scheme.outlineVariant.withOpacity(0.35)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              boxShadow: selected ? [BoxShadow(color: color.withOpacity(0.35), blurRadius: 8)] : null,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: selected ? color : scheme.onSurface.withOpacity(0.72))),
+        ]),
+      ),
     );
   }
 }

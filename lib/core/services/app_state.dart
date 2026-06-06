@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/build_profile.dart';
 import 'github_service.dart';
@@ -24,6 +24,10 @@ class AppState extends ChangeNotifier {
   String? tokenStatus;
   String? error;
   BuildProfile buildProfile = BuildProfile.debug;
+  ThemeMode themeMode = ThemeMode.system;
+  String? customWorkflowFile;
+  String workflowRef = 'main';
+  String themeVariant = 'arctic';
 
   // 支持切换账号与管理多账号
   List<Map<String, String>> accounts = []; // [{"login": "...", "token": "...", "avatarUrl": "..."}]
@@ -34,6 +38,10 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     customBackgroundPath = prefs.getString('custom_background_path');
     bgOpacity = prefs.getDouble('bg_opacity') ?? 0.72;
+    themeMode = _themeModeFromName(prefs.getString('theme_mode'));
+    themeVariant = prefs.getString('theme_variant') ?? 'arctic';
+    customWorkflowFile = prefs.getString('custom_workflow_file');
+    workflowRef = prefs.getString('workflow_ref') ?? 'main';
     final lastFullName = prefs.getString('selected_repo_full_name');
     if (lastFullName != null && lastFullName.contains('/')) {
       final parts = lastFullName.split('/');
@@ -44,14 +52,20 @@ class AppState extends ChangeNotifier {
     
     // 加载多账号
     final savedAccounts = prefs.getStringList('github_accounts') ?? [];
-    accounts = savedAccounts.map((item) {
-      final parts = item.split('|');
-      return {
-        'login': parts[0],
-        'token': parts[1],
-        'avatarUrl': parts.length > 2 ? parts[2] : '',
-      };
-    }).toList();
+    accounts = savedAccounts
+        .map((item) {
+          final parts = item.split('|');
+          if (parts.length < 2 || parts[0].trim().isEmpty || parts[1].trim().isEmpty) {
+            return null;
+          }
+          return {
+            'login': parts[0],
+            'token': parts[1],
+            'avatarUrl': parts.length > 2 ? parts.sublist(2).join('|') : '',
+          };
+        })
+        .whereType<Map<String, String>>()
+        .toList();
 
     token = await tokenStore.readToken();
     if (token == null || token!.isEmpty) return;
@@ -125,16 +139,18 @@ class AppState extends ChangeNotifier {
     if (token == null || token!.isEmpty || github == null) return false;
     try {
       final user = await github!.getCurrentUser();
-      login = user['login'] as String?;
+      final userLogin = user['login'] as String?;
+      login = userLogin;
       avatarUrl = user['avatar_url'] as String?;
       currentUser = Map<String, dynamic>.from(user);
-      selectedOwner ??= login;
+      selectedOwner ??= userLogin;
       tokenValidated = true;
-      tokenStatus = login == null ? 'Token 验证成功' : 'Token 验证成功：$login';
+      tokenStatus = userLogin == null ? 'Token 验证成功' : 'Token 验证成功：$userLogin';
       error = null;
       
-      // 自动保存/更新当前账号到列表
-      _addOrUpdateAccount(login!, token!, avatarUrl!);
+      if (userLogin != null && token != null) {
+        _addOrUpdateAccount(userLogin, token!, avatarUrl ?? '');
+      }
       
       notifyListeners();
       return true;
@@ -182,15 +198,18 @@ class AppState extends ChangeNotifier {
 
     try {
       final user = await service.getCurrentUser();
-      login = user['login'] as String?;
+      final userLogin = user['login'] as String?;
+      login = userLogin;
       avatarUrl = user['avatar_url'] as String?;
       currentUser = Map<String, dynamic>.from(user);
-      selectedOwner = login;
+      selectedOwner = userLogin;
       tokenValidated = true;
-      tokenStatus = login == null ? 'Token 验证成功' : 'Token 验证成功：$login';
+      tokenStatus = userLogin == null ? 'Token 验证成功' : 'Token 验证成功：$userLogin';
       loading = false;
 
-      _addOrUpdateAccount(login!, cleaned, avatarUrl ?? '');
+      if (userLogin != null) {
+        _addOrUpdateAccount(userLogin, cleaned, avatarUrl ?? '');
+      }
 
       notifyListeners();
       return true;
@@ -278,5 +297,50 @@ class AppState extends ChangeNotifier {
   void setBuildProfile(BuildProfile value) {
     buildProfile = value;
     notifyListeners();
+  }
+
+  Future<void> setCustomWorkflowFile(String? value) async {
+    final cleaned = value?.trim();
+    customWorkflowFile = cleaned == null || cleaned.isEmpty ? null : cleaned;
+    final prefs = await SharedPreferences.getInstance();
+    if (customWorkflowFile == null) {
+      await prefs.remove('custom_workflow_file');
+    } else {
+      await prefs.setString('custom_workflow_file', customWorkflowFile!);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setWorkflowRef(String value) async {
+    workflowRef = value.trim().isEmpty ? 'main' : value.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('workflow_ref', workflowRef);
+    notifyListeners();
+  }
+
+  Future<void> setThemeVariant(String value) async {
+    themeVariant = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('theme_variant', value);
+    notifyListeners();
+  }
+
+  Future<void> setThemeMode(ThemeMode value) async {
+    themeMode = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('theme_mode', value.name);
+    notifyListeners();
+  }
+
+  ThemeMode _themeModeFromName(String? name) {
+    switch (name) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      case 'system':
+      default:
+        return ThemeMode.system;
+    }
   }
 }
