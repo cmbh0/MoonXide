@@ -1,0 +1,31 @@
+# Workspace internals
+.backup/
+.operit/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+/build/
+flutter_*.png
+
+# Android / Gradle
+android/.gradle/
+android/local.properties
+android/**/build/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Secrets / local runtime
+github_token.txt
+*.jks
+*.keystore
+.env
+
+# OS
+.DS_Store
+Thumbs.db

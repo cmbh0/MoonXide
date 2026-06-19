@@ -1,0 +1,515 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../app/mx_widgets.dart';
+import '../../core/services/app_state.dart';
+import '../../core/services/build_center_state.dart';
+import '../../core/services/artifact_downloader.dart';
+import '../../core/services/log_parser.dart';
+import '../../core/platform/android_installer.dart';
+import '../../core/models/build_profile.dart';
+
+class BuildScreen extends StatelessWidget {
+  final AppState state;
+  const BuildScreen({super.key, required this.state});
+
+  Future<void> _trigger(BuildContext context) async {
+    final build = context.read<BuildCenterState>();
+    final owner = state.selectedOwner;
+    final repo  = state.selectedRepo;
+    if (owner == null || repo == null || state.github == null) {
+      build.setStatus('请先选择仓库');
+      return;
+    }
+    try {
+      if (state.buildProfile == BuildProfile.customWorkflow) {
+        final workflow = state.customWorkflowFile;
+        if (workflow == null || workflow.isEmpty) {
+          build.setStatus('请先在下方选择一个项目内工作流');
+          return;
+        }
+        await state.github!.dispatchWorkflow(
+          owner: owner,
+          repo: repo,
+          workflowFile: workflow,
+          ref: state.workflowRef,
+          inputs: const {},
+          isDefaultWorkflow: true,
+        );
+        build.start('正在触发自定义工作流 $workflow…', owner: owner, repo: repo, workflow: workflow);
+        build.updateProgress(statusText: '已触发 $workflow，正在轮询进度…', value: 0.12);
+        return;
+      }
+
+      final isDefault = state.buildProfile == BuildProfile.workflowDefault;
+      final workflow = await state.github!.dispatchBestBuildWorkflow(
+        owner: owner, repo: repo,
+        ref: state.workflowRef,
+        isDefaultWorkflow: isDefault,
+        inputs: isDefault ? {} : {
+          'build_type':      state.buildProfile == BuildProfile.debug ? 'debug' : 'release',
+          'publish_release': 'false',
+        },
+      );
+      build.start('正在触发 GitHub Actions…', owner: owner, repo: repo, workflow: workflow);
+      build.updateProgress(statusText: '已触发 $workflow，正在轮询进度…', value: 0.12);
+    } catch (e) {
+      build.fail('触发失败：$e');
+    }
+  }
+
+  Future<void> _poll(BuildContext context) async {
+    final build = context.read<BuildCenterState>();
+    final owner = build.buildOwner ?? state.selectedOwner;
+    final repo  = build.buildRepo ?? state.selectedRepo;
+    if (owner == null || repo == null || state.github == null) return;
+    build.setStatus('正在读取最新构建…');
+    try {
+      final runs = await state.github!.listWorkflowRuns(owner, repo);
+      if (runs.isEmpty) { build.setStatus('没有构建记录'); return; }
+      
+      Map<String, dynamic>? run;
+      if (build.workflowFile != null) {
+        final filtered = runs.where((r) => r['path']?.toString().endsWith('/${build.workflowFile}') == true).toList();
+        if (filtered.isNotEmpty) {
+          run = filtered.first;
+        }
+      }
+      run ??= runs.first;
+
+      final runId      = run['id'] as int;
+      final status     = run['status'];
+      final conclusion = run['conclusion'];
+      final htmlUrl    = run['html_url'];
+      
+      // 如果有开始触发的时刻，校验本次构建的创建时刻或 ID 以避免拿旧数据
+      if (build.triggerStartedAt != null) {
+        final createdAtStr = run['created_at']?.toString();
+        if (createdAtStr != null) {
+          final createdAt = DateTime.tryParse(createdAtStr);
+          if (createdAt != null && createdAt.isBefore(build.triggerStartedAt!.subtract(const Duration(seconds: 15)))) {
+            build.updateProgress(
+              statusText: '正在等待 GitHub Actions 响应并分配新的构建编号…',
+              value: 0.12,
+            );
+            return;
+          }
+        }
+      }
+
+      double progress = 0.12;
+      String? currentStep;
+      if (status == 'completed') {
+        progress = 1.0;
+      } else if (status == 'in_progress' || status == 'queued') {
+        try {
+          final jobs = await state.github!.listWorkflowJobs(owner, repo, runId);
+          if (jobs.isNotEmpty) {
+            final job = jobs.first;
+            final steps = (job['steps'] as List?) ?? const [];
+            if (steps.isNotEmpty) {
+              final total = steps.length;
+              final done = steps.where((s) => s['status'] == 'completed').length;
+              final running = steps.where((s) => s['status'] == 'in_progress').toList();
+              if (running.isNotEmpty) currentStep = running.first['name']?.toString();
+              progress = 0.15 + 0.80 * (done / total);
+            } else {
+              progress = 0.25;
+            }
+          }
+        } catch (_) {
+          progress = 0.55;
+        }
+      }
+      
+      final stepText = currentStep != null ? '\n当前步骤：$currentStep' : '';
+      build.updateProgress(
+        statusText: '状态：$status\n结果：${conclusion ?? '运行中'}$stepText\n$htmlUrl',
+        value: progress,
+        runUrl: htmlUrl?.toString(),
+        runId: runId,
+        step: currentStep,
+      );
+      if (status == 'completed' && conclusion == 'success') {
+        build.finish('构建完成：success\n$htmlUrl');
+        final artifacts = await state.github!.listArtifacts(owner, repo, runId);
+        if (artifacts.isNotEmpty) {
+          final artifact = artifacts.first;
+          build.setArtifact(
+            downloadUrl: artifact['archive_download_url'] as String?,
+            name: artifact['name']?.toString(),
+          );
+        }
+        build.setLog(null);
+      }
+      if (status == 'completed' && conclusion != 'success') {
+        build.fail('构建失败：${conclusion ?? 'unknown'}\n$htmlUrl');
+        try {
+          final bytes   = await state.github!.downloadRunLogs(owner, repo, runId);
+          final logsDir = Directory('/sdcard/Download/MoonXide/logs');
+          if (!await logsDir.exists()) await logsDir.create(recursive: true);
+          final logFile = File('${logsDir.path}/run_$runId.zip');
+          await logFile.writeAsBytes(bytes);
+          final summary = LogParser().summarizeBytes(bytes);
+          build.setLog(summary, filePath: logFile.path);
+        } catch (e) {
+          build.setLog('获取日志失败: $e');
+        }
+      }
+    } catch (e) {
+      build.setStatus('读取状态失败：$e');
+    }
+  }
+
+  String _safeArtifactFileName(String? name) {
+    final base = (name == null || name.trim().isEmpty) ? 'artifact' : name.trim();
+    final safe = base.replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '-');
+    return safe.toLowerCase().endsWith('.zip') ? safe : '$safe.zip';
+  }
+
+  Future<void> _download(BuildContext context) async {
+    final build = context.read<BuildCenterState>();
+    if (build.artifactDownloadUrl == null || state.token == null) return;
+    try {
+      final fileName = _safeArtifactFileName(build.artifactName);
+      build.startDownload();
+      final path = await ArtifactDownloader().download(
+        url: build.artifactDownloadUrl!,
+        token: state.token!,
+        fileName: fileName,
+        onProgress: (p) => build.updateDownloadProgress(p),
+      );
+      build.finishDownload(localPath: path);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已下载 GitHub Actions 附件到 $path')));
+      }
+    } catch (e) {
+      build.failDownload();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('下载失败：$e')));
+      }
+    }
+  }
+
+  Future<void> _install(BuildContext context) async {
+    final build = context.read<BuildCenterState>();
+    if (build.artifactLocalPath == null) return;
+    try {
+      await AndroidInstaller().openFile(build.artifactLocalPath!);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('打开失败：$e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final build  = context.watch<BuildCenterState>();
+    final scheme = Theme.of(context).colorScheme;
+    final artifactName = build.artifactName ?? 'GitHub Actions artifact';
+    final localPath = build.artifactLocalPath;
+    final isDownloadedApk = localPath != null && localPath.toLowerCase().endsWith('.apk');
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+      children: [
+        const MxSectionLabel('构建类型'),
+        MxCard(
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  _ProfileChip(
+                    label: 'Debug',
+                    icon: Icons.bug_report_rounded,
+                    active: state.buildProfile == BuildProfile.debug,
+                    onTap: () => state.setBuildProfile(BuildProfile.debug),
+                  ),
+                  const SizedBox(width: 10),
+                  _ProfileChip(
+                    label: 'Release',
+                    icon: Icons.rocket_launch_rounded,
+                    active: state.buildProfile == BuildProfile.release,
+                    onTap: () => state.setBuildProfile(BuildProfile.release),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  _ProfileChip(
+                    label: '默认工作流',
+                    icon: Icons.settings_backup_restore_rounded,
+                    active: state.buildProfile == BuildProfile.workflowDefault,
+                    onTap: () => state.setBuildProfile(BuildProfile.workflowDefault),
+                  ),
+                  const SizedBox(width: 10),
+                  _ProfileChip(
+                    label: '自定义',
+                    icon: Icons.account_tree_rounded,
+                    active: state.buildProfile == BuildProfile.customWorkflow,
+                    onTap: () => state.setBuildProfile(BuildProfile.customWorkflow),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (state.buildProfile == BuildProfile.customWorkflow) ...[
+          const MxSectionLabel('自定义工作流'),
+          _CustomWorkflowCard(state: state),
+        ],
+        const MxSectionLabel('操作'),
+        MxActionRow(children: [
+          MxButton(label: '触发编译', icon: Icons.play_arrow_rounded, onPressed: () => _trigger(context)),
+          MxButton(label: '刷新状态', icon: Icons.refresh_rounded,   onPressed: () => _poll(context),   filled: false),
+        ]),
+        const MxSectionLabel('构建状态'),
+        MxCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.terminal_rounded, size: 16, color: scheme.primary),
+                const SizedBox(width: 8),
+                const Text('GitHub Actions', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+              ]),
+              const SizedBox(height: 10),
+              SelectableText(build.status,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            ],
+          ),
+        ),
+        if (build.artifactDownloadUrl != null) ...[
+          const MxSectionLabel('产物'),
+          MxCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.archive_rounded, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(artifactName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    if (build.downloadBusy) ...[
+                      const SizedBox(height: 6),
+                      ClipRRect(borderRadius: BorderRadius.circular(99), child: LinearProgressIndicator(value: build.downloadProgress, minHeight: 3)),
+                      const SizedBox(height: 4),
+                      Text('正在下载产物：${(build.downloadProgress * 100).toStringAsFixed(1)}%', style: TextStyle(fontSize: 10, color: scheme.onSurface.withOpacity(0.5))),
+                    ],
+                  ])),
+                  const SizedBox(width: 8),
+                  MxBadge(localPath == null ? 'GitHub 附件' : '已下载', color: Colors.green),
+                ]),
+                const SizedBox(height: 8),
+                Text(
+                  build.artifactLocalPath ?? build.artifactDownloadUrl!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.5)),
+                ),
+                const SizedBox(height: 12),
+                MxActionRow(children: [
+                  MxButton(label: '下载附件', icon: Icons.download_rounded, onPressed: () => _download(context), filled: false),
+                  MxButton(label: isDownloadedApk ? '安装 APK' : '打开附件', icon: isDownloadedApk ? Icons.install_mobile_rounded : Icons.open_in_new_rounded, onPressed: localPath == null ? null : () => _install(context)),
+                ]),
+              ],
+            ),
+          ),
+        ],
+        if (build.logText != null) ...[
+          const MxSectionLabel('错误日志'),
+          MxCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(build.logText!,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
+                if (build.logFilePath != null) ...[
+                  const SizedBox(height: 12),
+                  MxButton(
+                    label: '查看完整日志',
+                    icon: Icons.open_in_new_rounded,
+                    filled: false,
+                    onPressed: () async {
+                      try {
+                        await AndroidInstaller().openFile(build.logFilePath!);
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('打开日志失败：$e')),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _CustomWorkflowCard extends StatefulWidget {
+  const _CustomWorkflowCard({required this.state});
+  final AppState state;
+
+  @override
+  State<_CustomWorkflowCard> createState() => _CustomWorkflowCardState();
+}
+
+class _CustomWorkflowCardState extends State<_CustomWorkflowCard> {
+  bool _loading = false;
+  String? _error;
+  List<Map<String, dynamic>> _workflows = const [];
+  late final TextEditingController _refCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _refCtrl = TextEditingController(text: widget.state.workflowRef);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadWorkflows());
+  }
+
+  @override
+  void dispose() {
+    _refCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadWorkflows() async {
+    final owner = widget.state.selectedOwner;
+    final repo = widget.state.selectedRepo;
+    final github = widget.state.github;
+    if (owner == null || repo == null || github == null) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final apiWorkflows = await github.listWorkflows(owner, repo);
+      final fileWorkflows = await github.listWorkflowFiles(owner, repo);
+      final merged = <String, Map<String, dynamic>>{};
+      for (final w in fileWorkflows) {
+        final id = _workflowId(w);
+        if (id.isNotEmpty) merged[id] = w;
+      }
+      for (final w in apiWorkflows) {
+        final id = _workflowId(w);
+        if (id.isNotEmpty) merged[id] = w;
+      }
+      final workflows = merged.values.toList()
+        ..sort((a, b) => _workflowLabel(a).toLowerCase().compareTo(_workflowLabel(b).toLowerCase()));
+      if (!mounted) return;
+      _workflows = workflows;
+      final selected = widget.state.customWorkflowFile;
+      final hasSelected = selected != null && workflows.any((w) => _workflowId(w) == selected);
+      if (!hasSelected && workflows.isNotEmpty) {
+        await widget.state.setCustomWorkflowFile(_workflowId(workflows.first));
+      }
+    } catch (e) {
+      _error = '工作流加载失败：$e';
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _workflowId(Map<String, dynamic> workflow) {
+    final path = workflow['path']?.toString();
+    if (path != null && path.isNotEmpty) return path.split('/').last;
+    return workflow['id']?.toString() ?? workflow['name']?.toString() ?? '';
+  }
+
+  String _workflowLabel(Map<String, dynamic> workflow) {
+    final name = workflow['name']?.toString() ?? '未命名工作流';
+    final path = workflow['path']?.toString() ?? _workflowId(workflow);
+    return '$name · $path';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = widget.state.customWorkflowFile;
+    final selectedValue = selected != null && _workflows.any((w) => _workflowId(w) == selected)
+        ? selected
+        : null;
+    return MxCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.account_tree_rounded, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('选择项目内 workflow_dispatch 工作流', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900))),
+          MxIconBtn(icon: Icons.refresh_rounded, size: 30, onPressed: _loading ? null : _loadWorkflows),
+        ]),
+        const SizedBox(height: 10),
+        if (_loading) const LinearProgressIndicator(minHeight: 2),
+        if (_workflows.isEmpty && !_loading)
+          Text('没有读取到工作流。请确认仓库包含 .github/workflows/*.yml 且 Token 有 workflow 权限。',
+              style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.58)))
+        else
+          MxDropdown<String>(
+            value: selectedValue,
+            hint: '选择工作流文件',
+            items: _workflows
+                .map((w) => MxDropdownItem<String>(
+                      value: _workflowId(w),
+                      label: _workflowLabel(w),
+                      icon: Icons.playlist_add_check_rounded,
+                    ))
+                .toList(),
+            onChanged: widget.state.setCustomWorkflowFile,
+          ),
+        const SizedBox(height: 10),
+        MxTextField(
+          controller: _refCtrl,
+          label: '触发分支 / ref',
+          hint: 'main、master 或指定分支名',
+          prefix: const Icon(Icons.call_split_rounded, size: 17),
+          onChanged: widget.state.setWorkflowRef,
+        ),
+        const SizedBox(height: 8),
+        Text('提示：自定义触发会按工作流默认输入执行；若工作流需要必填 inputs，请先在工作流中提供默认值。',
+            style: TextStyle(fontSize: 11, height: 1.4, color: scheme.onSurface.withOpacity(0.50))),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: const TextStyle(fontSize: 11, color: Colors.red)),
+        ],
+      ]),
+    );
+  }
+}
+
+class _ProfileChip extends StatelessWidget {
+  const _ProfileChip({required this.label, required this.icon, required this.active, required this.onTap});
+  final String   label;
+  final IconData icon;
+  final bool     active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? scheme.primary.withOpacity(0.14) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: active ? scheme.primary.withOpacity(0.45) : scheme.outlineVariant.withOpacity(0.3)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16, color: active ? scheme.primary : scheme.onSurface.withOpacity(0.5)),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(fontWeight: FontWeight.w800, color: active ? scheme.primary : scheme.onSurface.withOpacity(0.6))),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

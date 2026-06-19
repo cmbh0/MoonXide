@@ -1,0 +1,973 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../app/moonxide_theme.dart';
+import '../../app/mx_widgets.dart';
+import '../../core/services/app_state.dart';
+import '../../core/services/editor_state.dart';
+import '../../core/services/build_center_state.dart';
+import '../../core/services/log_parser.dart';
+import '../workspace/workspace_screen.dart';
+import '../editor/editor_screen.dart';
+import '../chat/chat_screen.dart';
+import '../build/build_screen.dart';
+import '../release/release_screen.dart';
+import '../settings/settings_screen.dart';
+import '../token_gate/token_gate_screen.dart';
+import '../profile/profile_screen.dart';
+
+enum _LeftPanel  { none, workspace }
+enum _RightPanel { none, ai, build, release, settings }
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  _LeftPanel  _left  = _LeftPanel.none;
+  _RightPanel _right = _RightPanel.none;
+
+  late final AnimationController _leftAnim;
+  late final AnimationController _rightAnim;
+  late final Animation<double>   _leftSlide;
+  late final Animation<double>   _rightSlide;
+  Timer? _buildPollTimer;
+
+  double? _customLeftWidth;
+  double? _customRightWidth;
+
+  // GlobalKey 用于调用 EditorScreen 的方法
+  final _editorKey = GlobalKey<EditorScreenState>();
+
+  @override
+  void initState() {
+    super.initState();
+    const dur = Duration(milliseconds: 220);
+    _leftAnim   = AnimationController(vsync: this, duration: dur);
+    _rightAnim  = AnimationController(vsync: this, duration: dur);
+    _leftSlide  = CurvedAnimation(parent: _leftAnim,  curve: Curves.easeOutCubic);
+    _rightSlide = CurvedAnimation(parent: _rightAnim, curve: Curves.easeOutCubic);
+  }
+
+  @override
+  void dispose() {
+    _leftAnim.dispose();
+    _rightAnim.dispose();
+    _buildPollTimer?.cancel();
+    super.dispose();
+  }
+
+  void _openLeft(_LeftPanel p) {
+    if (_left == p) { _closeLeft(); return; }
+    setState(() => _left = p);
+    _leftAnim.forward(from: 0);
+  }
+
+  void _openRight(_RightPanel p) {
+    if (_right == p) { _closeRight(); return; }
+    setState(() => _right = p);
+    _rightAnim.forward(from: 0);
+  }
+
+  void _closeLeft() {
+    _leftAnim.reverse().then((_) {
+      if (mounted) setState(() => _left = _LeftPanel.none);
+    });
+  }
+
+  void _closeRight() {
+    _rightAnim.reverse().then((_) {
+      if (mounted) setState(() => _right = _RightPanel.none);
+    });
+  }
+
+Future<void> _pollBuild(AppState state, BuildCenterState build) async {
+    final owner = build.buildOwner ?? state.selectedOwner;
+    final repo = build.buildRepo ?? state.selectedRepo;
+    if (!build.busy || owner == null || repo == null || state.github == null) return;
+    try {
+      final runs = await state.github!.listWorkflowRuns(owner, repo);
+      if (runs.isEmpty) return;
+
+      Map<String, dynamic>? run;
+      if (build.workflowFile != null) {
+        final filtered = runs.where((r) => r['path']?.toString().endsWith('/${build.workflowFile}') == true).toList();
+        if (filtered.isNotEmpty) {
+          run = filtered.first;
+        }
+      }
+      run ??= runs.first;
+
+      final runId = run['id'] as int;
+      final status = run['status'];
+      final conclusion = run['conclusion'];
+      final url = run['html_url']?.toString();
+
+      // 如果有开始触发的时刻，校验本次构建的创建时刻或 ID 以避免拿旧数据
+      if (build.triggerStartedAt != null) {
+        final createdAtStr = run['created_at']?.toString();
+        if (createdAtStr != null) {
+          final createdAt = DateTime.tryParse(createdAtStr);
+          // 如果拉到的最近一次构建的创建时间早于我们开始触发的时间，说明 GitHub Actions 还未启动或还没产生新 run，先不读取它
+          if (createdAt != null && createdAt.isBefore(build.triggerStartedAt!.subtract(const Duration(seconds: 15)))) {
+            // 说明最新的还是以前的旧 run，GitHub Actions 响应还没上来
+            final stepText = build.currentStep != null ? '\n当前步骤：${build.currentStep}' : '';
+            build.updateProgress(
+              statusText: '正在等待 GitHub Actions 响应并分配新的构建编号…',
+              value: 0.12,
+            );
+            return;
+          }
+        }
+      }
+
+      double progress = 0.12;
+      String? currentStep;
+      if (status == 'completed') {
+        progress = 1.0;
+      } else if (status == 'in_progress' || status == 'queued') {
+        try {
+          final jobs = await state.github!.listWorkflowJobs(owner, repo, runId);
+          if (jobs.isNotEmpty) {
+            final job = jobs.first;
+            final steps = (job['steps'] as List?) ?? const [];
+            if (steps.isNotEmpty) {
+              final total = steps.length;
+              final done = steps.where((s) => s['status'] == 'completed').length;
+              final running = steps.where((s) => s['status'] == 'in_progress').toList();
+              if (running.isNotEmpty) currentStep = running.first['name']?.toString();
+              progress = 0.15 + 0.80 * (done / total);
+            } else {
+              progress = 0.25;
+            }
+          } else {
+            progress = 0.20;
+          }
+        } catch (_) {
+          progress = 0.55;
+        }
+      }
+
+      if (status == 'completed' && conclusion == 'success') {
+        build.finish('构建完成：success');
+        final artifacts = await state.github!.listArtifacts(owner, repo, runId);
+        if (artifacts.isNotEmpty) {
+          final artifact = artifacts.first;
+          build.setArtifact(
+            downloadUrl: artifact['archive_download_url'] as String?,
+            name: artifact['name']?.toString(),
+          );
+        }
+      } else if (status == 'completed') {
+        build.fail('构建失败：${conclusion ?? 'unknown'}');
+        try {
+          final bytes = await state.github!.downloadRunLogs(owner, repo, runId);
+          final logsDir = Directory('/sdcard/Download/MoonXide/logs');
+          if (!await logsDir.exists()) await logsDir.create(recursive: true);
+          final logFile = File('${logsDir.path}/run_$runId.zip');
+          await logFile.writeAsBytes(bytes);
+          final summary = LogParser().summarizeBytes(bytes);
+          build.setLog(summary, filePath: logFile.path);
+          
+          if (mounted) {
+            _openRight(_RightPanel.build);
+          }
+        } catch (_) {}
+      } else {
+        final stepText = currentStep != null ? '\n当前步骤：$currentStep' : '';
+        build.updateProgress(
+          statusText: '构建中：$status$stepText',
+          value: progress,
+          runUrl: url,
+          runId: runId,
+          step: currentStep,
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _ensureBuildPolling(AppState state, BuildCenterState build) {
+    if (!build.busy) {
+      _buildPollTimer?.cancel();
+      _buildPollTimer = null;
+      return;
+    }
+    if (_buildPollTimer == null) {
+      _pollBuild(state, build);
+      _buildPollTimer = Timer.periodic(const Duration(minutes: 1), (_) => _pollBuild(state, build));
+    }
+  }
+
+  void _flushBuildNotice(BuildContext context, BuildCenterState build) {
+    final notice = build.pendingNotice;
+    if (notice == null) return;
+    build.consumeNotice();
+    // 之前这里是 ScaffoldMessenger.showSnackBar，现在已经通过右下角 _BuildToast 接管。
+    // 因此这里可以直接置空或者留作以后其他用途的通知
+  }
+
+  String _rightTitle() {
+    switch (_right) {
+      case _RightPanel.ai:       return 'AI 助手';
+      case _RightPanel.build:    return '云编译';
+      case _RightPanel.release:  return '发行版';
+      case _RightPanel.settings: return '设置';
+      case _RightPanel.none:     return '';
+    }
+  }
+
+  Widget _buildRightContent(AppState state) {
+    switch (_right) {
+      case _RightPanel.ai:       return const ChatScreen();
+      case _RightPanel.build:    return BuildScreen(state: state);
+      case _RightPanel.release:  return const ReleaseScreen();
+      case _RightPanel.settings: return SettingsScreen(state: state);
+      case _RightPanel.none:     return const SizedBox.shrink();
+    }
+  }
+
+  // ── 面板容器 ─────────────────────────────────────────────────────────────────
+  Widget _panelContainer({
+    required bool fromLeft,
+    required Animation<double> anim,
+    required String title,
+    required VoidCallback onClose,
+    required Widget child,
+    required double width,
+    required bool isDark,
+    bool hasBg = false,
+  }) {
+    final bg     = (isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF5F5F7))
+        .withOpacity(0.60);
+    final border = isDark
+        ? Colors.white.withOpacity(0.08)
+        : Colors.black.withOpacity(0.04);
+    final shadow = Colors.black;
+
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: Offset(fromLeft ? -1.0 : 1.0, 0),
+        end: Offset.zero,
+      ).animate(anim),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+              child: Container(
+                width: width,
+                decoration: BoxDecoration(
+                  color: bg,
+                  border: fromLeft
+                      ? Border(right: BorderSide(color: border, width: 0.5))
+                      : Border(left:  BorderSide(color: border, width: 0.5)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: shadow.withOpacity(isDark ? 0.40 : 0.08),
+                      blurRadius: 32,
+                      offset: Offset(fromLeft ? 8 : -8, 0),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    SafeArea(
+                      bottom: false,
+                      child: Container(
+                        height: 52,
+                        padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+                        child: Row(
+                          children: [
+                            Text(title,
+                                style: const TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.w700)),
+                            const Spacer(),
+                            MxIconBtn(
+                                icon: Icons.close_rounded,
+                                onPressed: onClose,
+                                tooltip: '关闭',
+                                size: 36),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Expanded(child: child),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // vscode 风格的拉动边缘
+          Positioned(
+            left: fromLeft ? null : -6,
+            right: fromLeft ? -6 : null,
+            top: 0,
+            bottom: 0,
+            width: 12,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onHorizontalDragUpdate: (details) {
+                final sw = MediaQuery.of(context).size.width;
+                setState(() {
+                  if (fromLeft) {
+                    // 左侧面板，向右拉增加宽度
+                    double next = _customLeftWidth ?? width;
+                    next += details.delta.dx;
+                    // 宽度限制在 0.2sw ~ 0.9sw 之间
+                    if (next >= sw * 0.2 && next <= sw * 0.9) {
+                      _customLeftWidth = next;
+                    }
+                  } else {
+                    // 右侧面板，向左拉增加宽度
+                    double next = _customRightWidth ?? width;
+                    next -= details.delta.dx;
+                    if (next >= sw * 0.2 && next <= sw * 0.9) {
+                      _customRightWidth = next;
+                    }
+                  }
+                });
+              },
+              child: MouseRegion(
+                cursor: SystemMouseCursors.resizeLeftRight,
+                child: Center(
+                  child: Container(
+                    width: 3,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white.withOpacity(0.12) : Colors.black.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 顶部工具栏高度（用于编辑器内容偏移） ────────────────────────────────────
+  static const double _toolbarH = 52.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final state  = context.watch<AppState>();
+    final build  = context.watch<BuildCenterState>();
+    final editor = context.watch<EditorState>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final mq     = MediaQuery.of(context);
+    final sw     = mq.size.width;
+    final topPad = mq.padding.top; // 状态栏高度
+
+    final leftW  = _customLeftWidth ?? (sw * 0.56);
+    final rightW = _customRightWidth ?? (sw * 0.78);
+
+    // 工具栏总高 = 状态栏 + 固定高度
+    final toolbarTotal = topPad + _toolbarH;
+    _ensureBuildPolling(state, build);
+    
+    return Scaffold(
+      backgroundColor: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF5F5F7),
+      body: Stack(
+        children: [
+          if (state.customBackgroundPath != null)
+            Positioned.fill(
+              child: Image.file(
+                File(state.customBackgroundPath!),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+          if (state.customBackgroundPath != null)
+            Positioned.fill(
+              child: ColoredBox(color: (isDark ? Colors.black : Colors.white)
+                  .withOpacity(1.0 - state.bgOpacity)),
+            ),
+          // ── 编辑器全屏底层（顶部留出工具栏空间） ──────────────────────────────
+          Positioned(
+            top: toolbarTotal,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: EditorScreen(key: _editorKey),
+          ),
+
+          // ── 顶部工具栏（平时在编辑器上方；面板打开后会被面板覆盖） ───────────
+          Positioned(
+            top: 0, left: 0, right: 0,
+            height: toolbarTotal,
+            child: _TopBar(
+              isDark: isDark,
+              scheme: scheme,
+              topPad: topPad,
+              editor: editor,
+              state: state,
+              leftOpen: _left == _LeftPanel.workspace,
+              rightPanel: _right,
+              onMenuTap: () => _openLeft(_LeftPanel.workspace),
+              onAiTap:      () => _openRight(_RightPanel.ai),
+              onBuildTap:   () => _openRight(_RightPanel.build),
+              onReleaseTap: () => _openRight(_RightPanel.release),
+              onSettingsTap:() => _openRight(_RightPanel.settings),
+              onSearchTap:  () => _editorKey.currentState?.toggleFind(),
+              onUndoTap:    editor.undo,
+              onRedoTap:    editor.redo,
+              onSaveLongPress: () {
+                final st = _editorKey.currentState;
+                if (st != null) st.saveAll(context);
+              },
+              onSaveTap:    () {
+                final st = _editorKey.currentState;
+                if (st != null) st.save(context);
+              },
+            ),
+          ),
+
+          // ── 左侧遮罩 ──────────────────────────────────────────────────────────
+          if (_left != _LeftPanel.none)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: _closeLeft,
+                child: FadeTransition(
+                  opacity: _leftSlide,
+                  child: ColoredBox(
+                      color: Colors.black
+                          .withOpacity(isDark ? 0.45 : 0.28)),
+                ),
+              ),
+            ),
+
+          // ── 左侧面板（文件树，从左滑入） ──────────────────────────────────────
+          if (_left != _LeftPanel.none)
+            Positioned(
+              top: 0, left: 0, bottom: 0,
+              child: _panelContainer(
+                fromLeft: true,
+                anim: _leftSlide,
+                title: '文件树',
+                onClose: _closeLeft,
+                width: leftW,
+                isDark: isDark,
+                hasBg: state.customBackgroundPath != null,
+                child: WorkspaceScreen(state: state),
+              ),
+            ),
+
+          // ── 右侧遮罩 ──────────────────────────────────────────────────────────
+          if (_right != _RightPanel.none)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: _closeRight,
+                child: FadeTransition(
+                  opacity: _rightSlide,
+                  child: ColoredBox(
+                      color: Colors.black
+                          .withOpacity(isDark ? 0.45 : 0.28)),
+                ),
+              ),
+            ),
+
+          // ── 右侧面板（AI/编译/发行/设置，从右滑入） ───────────────────────────
+          if (_right != _RightPanel.none)
+            Positioned(
+              top: 0, right: 0, bottom: 0,
+              child: _panelContainer(
+                fromLeft: false,
+                anim: _rightSlide,
+                title: _rightTitle(),
+                onClose: _closeRight,
+                width: rightW,
+                isDark: isDark,
+                hasBg: state.customBackgroundPath != null,
+                child: _buildRightContent(state),
+              ),
+            ),
+
+          // ── 右下角构建迷你通知条 ─────────────────────────────────────────────
+          if ((build.busy || build.outcome == BuildOutcome.success || build.outcome == BuildOutcome.failure) && !build.hideToast)
+            Positioned(
+              right: 12,
+              bottom: 14,
+              child: _BuildToast(center: build),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── 顶部工具栏组件 ───────────────────────────────────────────────────────────
+class _TopBar extends StatelessWidget {
+  const _TopBar({
+    required this.isDark,
+    required this.scheme,
+    required this.topPad,
+    required this.editor,
+    required this.state,
+    required this.leftOpen,
+    required this.rightPanel,
+    required this.onMenuTap,
+    required this.onAiTap,
+    required this.onBuildTap,
+    required this.onReleaseTap,
+    required this.onSettingsTap,
+    required this.onSearchTap,
+    required this.onUndoTap,
+    required this.onRedoTap,
+    required this.onSaveTap,
+    required this.onSaveLongPress,
+  });
+
+  final bool isDark;
+  final ColorScheme scheme;
+  final double topPad;
+  final EditorState editor;
+  final AppState state;
+  final bool leftOpen;
+  final _RightPanel rightPanel;
+  final VoidCallback onMenuTap;
+  final VoidCallback onAiTap;
+  final VoidCallback onBuildTap;
+  final VoidCallback onReleaseTap;
+  final VoidCallback onSettingsTap;
+  final VoidCallback onSearchTap;
+  final VoidCallback onUndoTap;
+  final VoidCallback onRedoTap;
+  final VoidCallback onSaveTap;
+  final VoidCallback onSaveLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = (isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF5F5F7))
+        .withOpacity(0.60);
+    final borderColor = isDark
+        ? Colors.white.withOpacity(0.08)
+        : Colors.black.withOpacity(0.04);
+
+    final rightActive = rightPanel != _RightPanel.none;
+
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+        child: Container(
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border(bottom: BorderSide(color: borderColor, width: 0.5)),
+          ),
+          padding: EdgeInsets.only(top: topPad),
+          child: SizedBox(
+            height: _HomeScreenState._toolbarH,
+            child: Row(
+              children: [
+                MxIconBtn(
+                  icon: Icons.menu_rounded,
+                  onPressed: onMenuTap,
+                  tooltip: '文件树',
+                  active: leftOpen,
+                  size: 40,
+                ),
+                MxIconBtn(
+                  icon: Icons.search_rounded,
+                  onPressed: onSearchTap,
+                  tooltip: '查找',
+                  size: 36,
+                ),
+                MxIconBtn(
+                  icon: Icons.undo_rounded,
+                  onPressed: editor.canUndo ? onUndoTap : null,
+                  active: editor.canUndo,
+                  size: 32,
+                ),
+                MxIconBtn(
+                  icon: Icons.redo_rounded,
+                  onPressed: editor.canRedo ? onRedoTap : null,
+                  active: editor.canRedo,
+                  size: 32,
+                ),
+                MxIconBtn(
+                  icon: Icons.save_rounded,
+                  onPressed: onSaveTap,
+                  onLongPress: onSaveLongPress,
+                  tooltip: editor.dirtyCount > 1 ? '保存当前；长按推送全部 ${editor.dirtyCount} 个文件' : '保存当前文件',
+                  active: editor.modified || editor.dirtyCount > 0,
+                  size: 34,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: _FileTab(
+                    path: editor.currentPath,
+                    modified: editor.modified,
+                    dirtyCount: editor.dirtyCount,
+                    isDark: isDark,
+                    scheme: scheme,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                _RightMenu(
+                  rightPanel: rightPanel,
+                  onAiTap: onAiTap,
+                  onBuildTap: onBuildTap,
+                  onReleaseTap: onReleaseTap,
+                  onSettingsTap: onSettingsTap,
+                  isDark: isDark,
+                  scheme: scheme,
+                ),
+                const SizedBox(width: 2),
+                _AvatarButton(state: state),
+                const SizedBox(width: 6),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AvatarButton extends StatelessWidget {
+  const _AvatarButton({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: 'GitHub 主页',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => ProfileScreen(state: state)),
+        ),
+        child: Container(
+          width: 34,
+          height: 34,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: scheme.primary.withOpacity(0.45), width: 1.4),
+            boxShadow: [BoxShadow(color: scheme.primary.withOpacity(0.12), blurRadius: 10)],
+          ),
+          child: CircleAvatar(
+            backgroundColor: scheme.primary.withOpacity(0.12),
+            backgroundImage: state.avatarUrl == null ? null : NetworkImage(state.avatarUrl!),
+            child: state.avatarUrl == null ? Icon(Icons.person_rounded, size: 18, color: scheme.primary) : null,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 文件名标签页 ─────────────────────────────────────────────────────────────
+class _FileTab extends StatelessWidget {
+  const _FileTab({required this.path, required this.modified,
+      required this.isDark, required this.scheme, required this.dirtyCount});
+  final String path;
+  final bool modified;
+  final bool isDark;
+  final ColorScheme scheme;
+  final int dirtyCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = path.isEmpty ? '未打开文件' : path.split('/').last;
+    final dir  = path.isEmpty ? '' : path.contains('/')
+        ? path.substring(0, path.lastIndexOf('/'))
+        : '';
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withOpacity(0.05)
+            : Colors.black.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withOpacity(0.08)
+              : Colors.black.withOpacity(0.07),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.insert_drive_file_rounded, size: 11, color: scheme.primary),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface.withOpacity(path.isEmpty ? 0.35 : 0.75)),
+            ),
+          ),
+          if (modified || dirtyCount > 0) ...[
+            const SizedBox(width: 4),
+            Container(
+              width: 5, height: 5,
+              decoration: BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── 右侧功能菜单（收进 PopupMenu 减少拥挤） ──────────────────────────────────
+class _RightMenu extends StatelessWidget {
+  const _RightMenu({
+    required this.rightPanel,
+    required this.onAiTap,
+    required this.onBuildTap,
+    required this.onReleaseTap,
+    required this.onSettingsTap,
+    required this.isDark,
+    required this.scheme,
+  });
+  final _RightPanel rightPanel;
+  final VoidCallback onAiTap;
+  final VoidCallback onBuildTap;
+  final VoidCallback onReleaseTap;
+  final VoidCallback onSettingsTap;
+  final bool isDark;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = rightPanel != _RightPanel.none;
+    return PopupMenuButton<int>(
+      tooltip: '功能面板',
+      offset: const Offset(0, 44),
+      color: isDark ? const Color(0xFF0A1C2C) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: isDark
+            ? Colors.white.withOpacity(0.08)
+            : Colors.black.withOpacity(0.06)),
+      ),
+      onSelected: (v) {
+        switch (v) {
+          case 0: onAiTap(); break;
+          case 1: onBuildTap(); break;
+          case 2: onReleaseTap(); break;
+          case 3: onSettingsTap(); break;
+        }
+      },
+      itemBuilder: (_) => [
+        _menuItem(0, Icons.auto_awesome_rounded, 'AI 助手',
+            rightPanel == _RightPanel.ai, scheme),
+        _menuItem(1, Icons.play_arrow_rounded, '云编译',
+            rightPanel == _RightPanel.build, scheme),
+        _menuItem(2, Icons.rocket_launch_rounded, '发行版',
+            rightPanel == _RightPanel.release, scheme),
+        _menuItem(3, Icons.tune_rounded, '设置',
+            rightPanel == _RightPanel.settings, scheme),
+      ],
+      child: Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          color: active ? scheme.primary.withOpacity(0.12) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(
+          active ? Icons.dashboard_rounded : Icons.dashboard_outlined,
+          size: 18,
+          color: active ? scheme.primary : scheme.onSurface.withOpacity(0.52),
+        ),
+      ),
+    );
+  }
+
+  PopupMenuItem<int> _menuItem(int v, IconData icon, String label,
+      bool active, ColorScheme scheme) {
+    return PopupMenuItem<int>(
+      value: v,
+      height: 40,
+      child: Row(children: [
+        Icon(icon, size: 16,
+            color: active ? scheme.primary : scheme.onSurface.withOpacity(0.6)),
+        const SizedBox(width: 10),
+        Text(label,
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: active ? FontWeight.w800 : FontWeight.w500,
+                color: active ? scheme.primary : scheme.onSurface.withOpacity(0.8))),
+      ]),
+    );
+  }
+}
+
+class _BuildToast extends StatefulWidget {
+  const _BuildToast({required this.center});
+  final BuildCenterState center;
+
+  @override
+  State<_BuildToast> createState() => _BuildToastState();
+}
+
+class _BuildToastState extends State<_BuildToast> {
+  late Timer _tipTimer;
+  int _tipIdx = 0;
+
+  static const _tips = [
+    '☕ 代码正在变成二进制，顺便喝杯咖啡吧。',
+    '✨ 正在给你的 APK 注入魔法，请稍候。',
+    '🌌 物理规律表明，代码越好，编译速度越快…',
+    '🚀 编译服务器正在全力以赴，马上就好！',
+    '🛠 只要不报错，慢一点其实是种享受。',
+    '🌈 有时候，等待是为了让结果更完美。',
+    '🤖 顺便检查了下，AI 的工作成果没有偷懒。',
+    '💎 我们正在对代码包进行深度的压缩与润色…',
+    '🎯 不要焦躁，优秀的产品值得细心打磨。',
+    '🍂 如果报错了，记得叫 AI 帮你修哦！',
+    '🦊 正在调试云端的编译器：参数调优 +10086！',
+    '⚡ 听说点赞 Star 的同学，编译通过率能提高 99.9% 哦。',
+    '🍵 程序员的三大梦想：代码一次过、不加班、头发多。',
+    '🦄 云端服务器目前运行非常平稳，正以光速打包产物。',
+    '📡 GitHub Actions 正在飞速拉取依赖，请保持耐心。',
+    '🍀 正在努力把复杂的 Dart 代码融合成纯粹的机器码。',
+    '🧬 我们正在进行模块级优化编译，不要提前关闭哦。',
+    '🦁 北海开发者的云端服务器正哼着歌为你编译代码呢。',
+    '🍎 内测群文件里有最新构建生成的尊贵 APK，快去体验吧！',
+    '☄️ 别担心，我们在云端的每一次编译都做好了沙箱隔离。',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tipIdx = (DateTime.now().second) % _tips.length;
+    _tipTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (mounted) {
+        setState(() {
+          _tipIdx = (_tipIdx + 1) % _tips.length;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tipTimer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    final isRunning = widget.center.outcome == BuildOutcome.running;
+    final isSuccess = widget.center.outcome == BuildOutcome.success;
+    final isFailure = widget.center.outcome == BuildOutcome.failure;
+    
+    final bgColor = isSuccess
+        ? const Color(0xFF1E8E3E)
+        : (isFailure ? const Color(0xFFB3261E) : (isDark ? const Color(0xFF0F2230) : Colors.white));
+    final borderColor = isSuccess
+        ? const Color(0xFF4CAF50)
+        : (isFailure ? const Color(0xFFEF5350) : scheme.primary);
+    final icon = isSuccess
+        ? Icons.check_circle_rounded
+        : (isFailure ? Icons.error_outline_rounded : Icons.build_circle_rounded);
+    final title = isSuccess
+        ? '构建成功'
+        : (isFailure ? '构建失败' : (widget.center.status.contains('推送') ? '正在推送' : '正在构建'));
+    
+    return Material(
+      color: Colors.transparent,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+          child: Container(
+            width: 220,
+            padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+            decoration: BoxDecoration(
+              color: bgColor.withOpacity(isRunning ? 0.60 : 0.75),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: borderColor.withOpacity(0.40), width: 0.5),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(isDark ? 0.30 : 0.10), blurRadius: 20, offset: const Offset(0, 6))],
+            ),
+            child: Stack(
+              children: [
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      if (isRunning)
+                        SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(scheme.primary)))
+                      else
+                        Icon(icon, size: 14, color: Colors.white),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text(title, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: isRunning ? null : Colors.white))),
+                      if (isRunning)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 16),
+                          child: Text('${(widget.center.progress * 100).round()}%', style: TextStyle(fontSize: 10, color: scheme.primary, fontWeight: FontWeight.w800)),
+                        ),
+                    ]),
+                    if (isRunning) ...[
+                      const SizedBox(height: 6),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 16),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(99),
+                          child: LinearProgressIndicator(value: widget.center.progress <= 0 ? null : widget.center.progress, minHeight: 3),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 5),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 16),
+                      child: Text(
+                        widget.center.status.split('\n').first,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 10, color: isRunning ? scheme.onSurface.withOpacity(0.55) : Colors.white.withOpacity(0.8)),
+                      ),
+                    ),
+                    if (isRunning) ...[
+                      const SizedBox(height: 5),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 16),
+                        child: Text(
+                          _tips[_tipIdx],
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 9, height: 1.25, color: scheme.onSurface.withOpacity(0.48), fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                Positioned(
+                  top: -6,
+                  right: -6,
+                  child: IconButton(
+                    icon: Icon(Icons.close_rounded, size: 14, color: isRunning ? scheme.onSurface.withOpacity(0.45) : Colors.white.withOpacity(0.75)),
+                    onPressed: () => widget.center.dismissToast(),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
