@@ -726,15 +726,15 @@ $fileContent
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 if (editor.isLoadingMore)
-                  const Row(
+                  Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       SizedBox(
                         width: 10, height: 10,
                         child: CircularProgressIndicator(strokeWidth: 1.5),
                       ),
-                      SizedBox(width: 6),
-                      Text('加载中...', style: TextStyle(fontSize: 10)),
+                      const SizedBox(width: 6),
+                      const Text('加载中...', style: TextStyle(fontSize: 10)),
                     ],
                   )
                 else if (editor.loadedLineCount < editor.totalLineCount)
@@ -770,7 +770,6 @@ $fileContent
               ),
             ),
           ),
-
         // ── 符号快捷栏 ────────────────────────────────────────────────────────
         _SymbolBar(
             isDark: isDark,
